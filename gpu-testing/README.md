@@ -52,7 +52,7 @@ $$s_{23} = (p_2 - p_3)^\mu (p_2 - p_3)_\mu$$
 
 $$f(p_1, p_2, p_3) = \sin\left(\sqrt{\frac{|s_{12} - s_{23}|}{\lambda^2}}\right) \cdot \cos\left(\sqrt{\frac{|s_{13}|}{\lambda^2}}\right)$$
 
-where $\lambda$ is a scale parameter (default: 1.0).
+where $\lambda^2$ is a scale parameter (default: $1000^2 = 10^6$).
 
 This integrand:
 - Is Lorentz-invariant (depends only on invariant masses)

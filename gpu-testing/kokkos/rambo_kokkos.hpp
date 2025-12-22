@@ -5,26 +5,40 @@
 #include <cmath>
 
 // =============================================================================
-// RAMBO Phase Space Generator for Kokkos
+// Phase Space Generation Framework for Kokkos
 // =============================================================================
-// Generates nParticles 4-momenta with the given total center-of-mass energy
-// and particle masses using the RAMBO algorithm.
+// Modular design allowing different phase space generation algorithms.
+// The PhaseSpaceGenerator wraps an algorithm (e.g., RamboAlgorithm) and
+// provides a uniform interface for generating particle momenta.
 //
+// To use a different algorithm, change the Algorithm template parameter.
+// =============================================================================
+
+// =============================================================================
+// RAMBO Algorithm Implementation
+// =============================================================================
 // Reference: R. Kleiss, W.J. Stirling, S.D. Ellis, Comp. Phys. Comm. 40 (1986) 359
+//
+// Generates nParticles 4-momenta with uniform phase space distribution.
+// Supports both massless and massive particles.
 // =============================================================================
 
 template <int nParticles>
-struct PhaseSpaceGenerator {
-    double cmEnergy;          // Center-of-mass energy
-    const double* masses;     // Particle masses array
-    
-    KOKKOS_FUNCTION PhaseSpaceGenerator(double energy, const double* m) 
-        : cmEnergy(energy), masses(m) {}
+struct RamboAlgorithm {
+    // Algorithm constants
+    static constexpr double tolerance = 1e-14;
+    static constexpr int maxIterations = 1000;
     
     // Generate momenta and return the log of the phase space weight
-    // TRng: Kokkos RNG generator type
+    // Parameters:
+    //   cmEnergy: Center-of-mass energy
+    //   masses: Array of particle masses
+    //   rng: Kokkos RNG generator (modified)
+    //   momenta: Output array [nParticles][4] for 4-momenta
+    // Returns: log(weight) or 0.0 if generation failed
     template <typename TRng>
-    KOKKOS_FUNCTION auto operator()(TRng& rng, double momenta[][4]) const -> double {
+    KOKKOS_FUNCTION auto generate(double cmEnergy, const double* masses, 
+                                  TRng& rng, double momenta[][4]) const -> double {
         // Local arrays for intermediate calculations
         double q[nParticles][4];      // Isotropic momenta
         double p[nParticles][4];      // Boosted momenta
@@ -38,9 +52,7 @@ struct PhaseSpaceGenerator {
         double energies[nParticles];  // Energies after rescaling
         double virtMom[nParticles];   // Virtual momenta
         
-        // Algorithm constants
-        constexpr double tolerance = 1e-14;
-        constexpr int maxIterations = 1000;
+        // Constants
         const double twoPi = 8.0 * Kokkos::atan(1.0);
         const double logPiOver2 = Kokkos::log(twoPi / 4.0);
         
@@ -184,6 +196,38 @@ struct PhaseSpaceGenerator {
     }
 };
 
+// =============================================================================
+// Phase Space Generator (Wrapper)
+// =============================================================================
+// Template wrapper that delegates to a specific algorithm implementation.
+// Provides a uniform callable interface for the integrator.
+//
+// Template Parameters:
+//   nParticles: Number of final-state particles
+//   Algorithm: Phase space algorithm (default: RamboAlgorithm)
+// =============================================================================
+
+template <int nParticles, typename Algorithm = RamboAlgorithm<nParticles>>
+struct PhaseSpaceGenerator {
+    double cmEnergy;          // Center-of-mass energy
+    const double* masses;     // Particle masses array
+    Algorithm algorithm;      // The underlying algorithm
+    
+    KOKKOS_FUNCTION PhaseSpaceGenerator(double energy, const double* m) 
+        : cmEnergy(energy), masses(m), algorithm() {}
+    
+    // Generate momenta and return the log of the phase space weight
+    // TRng: Kokkos RNG generator type
+    template <typename TRng>
+    KOKKOS_FUNCTION auto operator()(TRng& rng, double momenta[][4]) const -> double {
+        return algorithm.generate(cmEnergy, masses, rng, momenta);
+    }
+};
+
+// Convenience type alias using RAMBO as the default algorithm
+template <int nParticles>
+using DefaultPhaseSpaceGenerator = PhaseSpaceGenerator<nParticles, RamboAlgorithm<nParticles>>;
+
 // Backwards compatibility alias
 template <int NP>
-using RamboDevice = PhaseSpaceGenerator<NP>;
+using RamboDevice = DefaultPhaseSpaceGenerator<NP>;

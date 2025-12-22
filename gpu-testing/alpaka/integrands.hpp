@@ -18,7 +18,7 @@
 struct EggholderIntegrand {
     double lambdaSquared;  // Scale parameter
     
-    ALPAKA_FN_HOST_ACC EggholderIntegrand(double lambda = 1.0) 
+    ALPAKA_FN_HOST_ACC EggholderIntegrand(double lambda = 1000000.0) 
         : lambdaSquared(lambda) {}
     
     ALPAKA_FN_HOST_ACC auto evaluate(const double momenta[][4]) const -> double {

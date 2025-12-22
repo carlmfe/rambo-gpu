@@ -18,7 +18,7 @@
 struct EggholderIntegrand {
     double lambdaSquared;  // Scale parameter
     
-    KOKKOS_FUNCTION EggholderIntegrand(double lambda = 1.0) 
+    KOKKOS_FUNCTION EggholderIntegrand(double lambda = 1000000.0) 
         : lambdaSquared(lambda) {}
     
     KOKKOS_INLINE_FUNCTION auto evaluate(const double momenta[][4]) const -> double {

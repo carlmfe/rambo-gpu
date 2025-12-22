@@ -84,11 +84,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Number of particles: " << nParticles << std::endl;
         std::cout << std::endl;
         
-        // Set up particle masses (massless particles)
-        double masses[nParticles] = {0.0, 0.0, 0.0};
+        // Set up particle masses (non-zero for testing massive RAMBO)
+        // Using realistic masses: ~electron, ~muon, ~pion scale in GeV
+        double masses[nParticles] = {0.5, 100.0, 140.0};
         
-        // Create integrand
-        EggholderIntegrand integrand(1.0);
+        // Create integrand (uses default lambdaSquared = 1000^2)
+        EggholderIntegrand integrand;
         
         // Run benchmark
         runBenchmark<EggholderIntegrand, nParticles>(

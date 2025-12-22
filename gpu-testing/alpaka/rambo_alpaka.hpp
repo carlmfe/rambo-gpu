@@ -4,27 +4,42 @@
 #include <cmath>
 
 // =============================================================================
-// RAMBO Phase Space Generator for Alpaka 2.0.0
+// Phase Space Generation Framework for Alpaka 2.0.0
 // =============================================================================
-// Generates nParticles 4-momenta with the given total center-of-mass energy
-// and particle masses using the RAMBO algorithm.
+// Modular design allowing different phase space generation algorithms.
+// The PhaseSpaceGenerator wraps an algorithm (e.g., RamboAlgorithm) and
+// provides a uniform interface for generating particle momenta.
 //
+// To use a different algorithm, change the Algorithm template parameter.
+// =============================================================================
+
+// =============================================================================
+// RAMBO Algorithm Implementation
+// =============================================================================
 // Reference: R. Kleiss, W.J. Stirling, S.D. Ellis, Comp. Phys. Comm. 40 (1986) 359
+//
+// Generates nParticles 4-momenta with uniform phase space distribution.
+// Supports both massless and massive particles.
 // =============================================================================
 
 template <int nParticles>
-struct PhaseSpaceGenerator {
-    double cmEnergy;          // Center-of-mass energy
-    const double* masses;     // Particle masses array
-    
-    ALPAKA_FN_HOST_ACC PhaseSpaceGenerator(double energy, const double* m) 
-        : cmEnergy(energy), masses(m) {}
+struct RamboAlgorithm {
+    // Algorithm constants
+    static constexpr double tolerance = 1e-14;
+    static constexpr int maxIterations = 1000;
     
     // Generate momenta and return the log of the phase space weight
-    // TEngine: RNG engine type (e.g., Philox)
-    // TDist: Uniform distribution type [0,1)
+    // Parameters:
+    //   cmEnergy: Center-of-mass energy
+    //   masses: Array of particle masses
+    //   engine: Alpaka RNG engine (modified)
+    //   dist: Alpaka uniform distribution [0,1)
+    //   momenta: Output array [nParticles][4] for 4-momenta
+    // Returns: log(weight) or 0.0 if generation failed
     template <typename TEngine, typename TDist>
-    ALPAKA_FN_HOST_ACC auto operator()(TEngine& engine, TDist& dist, double momenta[][4]) const -> double {
+    ALPAKA_FN_HOST_ACC auto generate(double cmEnergy, const double* masses,
+                                     TEngine& engine, TDist& dist, 
+                                     double momenta[][4]) const -> double {
         // Local arrays for intermediate calculations
         double q[nParticles][4];      // Isotropic momenta
         double p[nParticles][4];      // Boosted momenta
@@ -38,9 +53,7 @@ struct PhaseSpaceGenerator {
         double energies[nParticles];  // Energies after rescaling
         double virtMom[nParticles];   // Virtual momenta
         
-        // Algorithm constants
-        constexpr double tolerance = 1e-14;
-        constexpr int maxIterations = 1000;
+        // Constants
         const double twoPi = 8.0 * std::atan(1.0);
         const double logPiOver2 = std::log(twoPi / 4.0);
         
@@ -184,6 +197,39 @@ struct PhaseSpaceGenerator {
     }
 };
 
+// =============================================================================
+// Phase Space Generator (Wrapper)
+// =============================================================================
+// Template wrapper that delegates to a specific algorithm implementation.
+// Provides a uniform callable interface for the integrator.
+//
+// Template Parameters:
+//   nParticles: Number of final-state particles
+//   Algorithm: Phase space algorithm (default: RamboAlgorithm)
+// =============================================================================
+
+template <int nParticles, typename Algorithm = RamboAlgorithm<nParticles>>
+struct PhaseSpaceGenerator {
+    double cmEnergy;          // Center-of-mass energy
+    const double* masses;     // Particle masses array
+    Algorithm algorithm;      // The underlying algorithm
+    
+    ALPAKA_FN_HOST_ACC PhaseSpaceGenerator(double energy, const double* m) 
+        : cmEnergy(energy), masses(m), algorithm() {}
+    
+    // Generate momenta and return the log of the phase space weight
+    // TEngine: RNG engine type (e.g., Philox)
+    // TDist: Uniform distribution type [0,1)
+    template <typename TEngine, typename TDist>
+    ALPAKA_FN_HOST_ACC auto operator()(TEngine& engine, TDist& dist, double momenta[][4]) const -> double {
+        return algorithm.generate(cmEnergy, masses, engine, dist, momenta);
+    }
+};
+
+// Convenience type alias using RAMBO as the default algorithm
+template <int nParticles>
+using DefaultPhaseSpaceGenerator = PhaseSpaceGenerator<nParticles, RamboAlgorithm<nParticles>>;
+
 // Backwards compatibility alias
 template <int NP>
-using RamboDevice = PhaseSpaceGenerator<NP>;
+using RamboDevice = DefaultPhaseSpaceGenerator<NP>;

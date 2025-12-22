@@ -17,7 +17,7 @@
 struct EggholderIntegrand {
     double lambdaSquared;  // Scale parameter
     
-    EggholderIntegrand(double lambda = 1.0) 
+    EggholderIntegrand(double lambda = 1000000.0) 
         : lambdaSquared(lambda) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
