@@ -1,0 +1,294 @@
+#!/bin/bash
+# =============================================================================
+# RAMBO GPU Performance Benchmark Script
+# =============================================================================
+# Compares performance of Kokkos, Alpaka, and CUDA implementations
+#
+# Usage: ./benchmark.sh [num_events] [seed]
+#        ./benchmark.sh              # Default: 10M events, seed 5489
+#        ./benchmark.sh 100000000    # 100M events
+#        ./benchmark.sh 10000000 42  # Custom seed
+# =============================================================================
+
+set -e
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NUM_EVENTS=${1:-10000000}
+SEED=${2:-5489}
+NUM_RUNS=${3:-3}
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+echo -e "${CYAN}======================================${NC}"
+echo -e "${CYAN}RAMBO GPU Performance Benchmark${NC}"
+echo -e "${CYAN}======================================${NC}"
+echo ""
+echo -e "Events per run: ${YELLOW}${NUM_EVENTS}${NC}"
+echo -e "Random seed: ${YELLOW}${SEED}${NC}"
+echo -e "Number of runs: ${YELLOW}${NUM_RUNS}${NC}"
+echo ""
+
+# Function to build a project
+build_project() {
+    local name=$1
+    local dir=$2
+    local cmake_args=${3:-""}
+    
+    echo -e "${BLUE}Building ${name}...${NC}"
+    
+    if [ ! -d "$dir" ]; then
+        echo -e "${RED}Error: Directory $dir not found${NC}"
+        return 1
+    fi
+    
+    cd "$dir"
+    rm -rf build
+    mkdir -p build
+    cd build
+    
+    if cmake $cmake_args .. > /dev/null 2>&1; then
+        if make -j4 > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ ${name} built successfully${NC}"
+            return 0
+        else
+            echo -e "${RED}✗ ${name} build failed${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}✗ ${name} cmake failed${NC}"
+        return 1
+    fi
+}
+
+# Function to run benchmark and extract throughput
+run_benchmark() {
+    local name=$1
+    local executable=$2
+    local runs=$3
+    
+    if [ ! -x "$executable" ]; then
+        echo -e "${RED}Error: Executable $executable not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Running ${name} (${runs} runs)...${NC}"
+    
+    local total_throughput=0
+    local min_throughput=999999999999
+    local max_throughput=0
+    local throughputs=()
+    
+    for ((i=1; i<=runs; i++)); do
+        # Run and capture output
+        output=$("$executable" "$NUM_EVENTS" "$SEED" 2>&1)
+        
+        # Extract throughput (events/sec)
+        throughput=$(echo "$output" | grep "Throughput:" | tail -1 | awk '{print $2}')
+        
+        if [ -n "$throughput" ]; then
+            throughputs+=($throughput)
+            
+            # Convert scientific notation to decimal for comparison
+            throughput_dec=$(echo "$throughput" | awk '{printf "%.0f", $1}')
+            total_throughput=$((total_throughput + throughput_dec))
+            
+            if [ "$throughput_dec" -lt "$min_throughput" ]; then
+                min_throughput=$throughput_dec
+            fi
+            if [ "$throughput_dec" -gt "$max_throughput" ]; then
+                max_throughput=$throughput_dec
+            fi
+            
+            echo -e "  Run $i: ${throughput} events/sec"
+        else
+            echo -e "  ${RED}Run $i: Failed to extract throughput${NC}"
+        fi
+    done
+    
+    if [ ${#throughputs[@]} -gt 0 ]; then
+        avg_throughput=$((total_throughput / ${#throughputs[@]}))
+        echo -e "${GREEN}  Average: $(printf "%.2e" $avg_throughput) events/sec${NC}"
+        echo -e "  Min: $(printf "%.2e" $min_throughput), Max: $(printf "%.2e" $max_throughput)"
+        
+        # Store result for summary
+        eval "${name}_avg=$avg_throughput"
+        eval "${name}_min=$min_throughput"
+        eval "${name}_max=$max_throughput"
+    fi
+    
+    echo ""
+}
+
+# Function to verify GPU utilization
+verify_gpu() {
+    local name=$1
+    local executable=$2
+    
+    echo -e "${BLUE}Verifying GPU utilization for ${name}...${NC}"
+    
+    if [ -x "$SCRIPT_DIR/check_gpu.sh" ]; then
+        "$SCRIPT_DIR/check_gpu.sh" "$executable" "$NUM_EVENTS" "$SEED" 2>&1 | grep -a -E "(GPU WAS|GPU was NOT)" || true
+    else
+        echo -e "${YELLOW}Warning: check_gpu.sh not found${NC}"
+    fi
+    echo ""
+}
+
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}Phase 1: Building Projects${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
+
+# Build all projects
+BASE_OK=false
+KOKKOS_OK=false
+ALPAKA_OK=false
+CUDA_OK=false
+
+if build_project "Base (Serial)" "$SCRIPT_DIR/base"; then
+    BASE_OK=true
+fi
+
+if build_project "Kokkos" "$SCRIPT_DIR/kokkos"; then
+    KOKKOS_OK=true
+fi
+
+if build_project "Alpaka (CUDA)" "$SCRIPT_DIR/alpaka" "-DALPAKA_BACKEND=CUDA"; then
+    ALPAKA_OK=true
+fi
+
+if build_project "CUDA" "$SCRIPT_DIR/cuda"; then
+    CUDA_OK=true
+fi
+
+echo ""
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}Phase 2: GPU Verification${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
+
+if $KOKKOS_OK; then
+    verify_gpu "Kokkos" "$SCRIPT_DIR/kokkos/build/rambo_kokkos"
+fi
+
+if $ALPAKA_OK; then
+    verify_gpu "Alpaka" "$SCRIPT_DIR/alpaka/build/rambo_alpaka"
+fi
+
+if $CUDA_OK; then
+    verify_gpu "CUDA" "$SCRIPT_DIR/cuda/build/rambo_cuda"
+fi
+
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}Phase 3: Performance Benchmarks${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
+
+# Run benchmarks
+BASE_avg=0
+KOKKOS_avg=0
+ALPAKA_avg=0
+CUDA_avg=0
+
+if $BASE_OK; then
+    run_benchmark "BASE" "$SCRIPT_DIR/base/build/rambo_base" "$NUM_RUNS"
+fi
+
+if $KOKKOS_OK; then
+    run_benchmark "KOKKOS" "$SCRIPT_DIR/kokkos/build/rambo_kokkos" "$NUM_RUNS"
+fi
+
+if $ALPAKA_OK; then
+    run_benchmark "ALPAKA" "$SCRIPT_DIR/alpaka/build/rambo_alpaka" "$NUM_RUNS"
+fi
+
+if $CUDA_OK; then
+    run_benchmark "CUDA" "$SCRIPT_DIR/cuda/build/rambo_cuda" "$NUM_RUNS"
+fi
+
+echo -e "${CYAN}========================================${NC}"
+echo -e "${CYAN}Summary${NC}"
+echo -e "${CYAN}========================================${NC}"
+echo ""
+
+# Print summary table
+printf "%-12s %15s %15s %15s\n" "Backend" "Avg (ev/s)" "Min" "Max"
+printf "%-12s %15s %15s %15s\n" "--------" "----------" "---" "---"
+
+if $BASE_OK && [ "$BASE_avg" -gt 0 ]; then
+    printf "%-12s %15.2e %15.2e %15.2e\n" "Base" $BASE_avg $BASE_min $BASE_max
+fi
+
+if $KOKKOS_OK && [ "$KOKKOS_avg" -gt 0 ]; then
+    printf "%-12s %15.2e %15.2e %15.2e\n" "Kokkos" $KOKKOS_avg $KOKKOS_min $KOKKOS_max
+fi
+
+if $ALPAKA_OK && [ "$ALPAKA_avg" -gt 0 ]; then
+    printf "%-12s %15.2e %15.2e %15.2e\n" "Alpaka" $ALPAKA_avg $ALPAKA_min $ALPAKA_max
+fi
+
+if $CUDA_OK && [ "$CUDA_avg" -gt 0 ]; then
+    printf "%-12s %15.2e %15.2e %15.2e\n" "CUDA" $CUDA_avg $CUDA_min $CUDA_max
+fi
+
+echo ""
+
+# Determine winner
+max_avg=0
+winner="None"
+
+if [ "$BASE_avg" -gt "$max_avg" ]; then
+    max_avg=$BASE_avg
+    winner="Base"
+fi
+
+if [ "$KOKKOS_avg" -gt "$max_avg" ]; then
+    max_avg=$KOKKOS_avg
+    winner="Kokkos"
+fi
+
+if [ "$ALPAKA_avg" -gt "$max_avg" ]; then
+    max_avg=$ALPAKA_avg
+    winner="Alpaka"
+fi
+
+if [ "$CUDA_avg" -gt "$max_avg" ]; then
+    max_avg=$CUDA_avg
+    winner="CUDA"
+fi
+
+echo -e "${GREEN}Fastest backend: ${winner} ($(printf "%.2e" $max_avg) events/sec)${NC}"
+echo ""
+
+# Calculate relative performance
+if [ "$max_avg" -gt 0 ]; then
+    echo "Relative performance:"
+    if $BASE_OK && [ "$BASE_avg" -gt 0 ]; then
+        rel=$(echo "scale=1; $BASE_avg * 100 / $max_avg" | bc)
+        printf "  Base:   %5.1f%%\n" $rel
+    fi
+    if $KOKKOS_OK && [ "$KOKKOS_avg" -gt 0 ]; then
+        rel=$(echo "scale=1; $KOKKOS_avg * 100 / $max_avg" | bc)
+        printf "  Kokkos: %5.1f%%\n" $rel
+    fi
+    if $ALPAKA_OK && [ "$ALPAKA_avg" -gt 0 ]; then
+        rel=$(echo "scale=1; $ALPAKA_avg * 100 / $max_avg" | bc)
+        printf "  Alpaka: %5.1f%%\n" $rel
+    fi
+    if $CUDA_OK && [ "$CUDA_avg" -gt 0 ]; then
+        rel=$(echo "scale=1; $CUDA_avg * 100 / $max_avg" | bc)
+        printf "  CUDA:   %5.1f%%\n" $rel
+    fi
+fi
+
+echo ""
+echo -e "${CYAN}======================================${NC}"
+echo -e "${CYAN}Benchmark complete.${NC}"
+echo -e "${CYAN}======================================${NC}"

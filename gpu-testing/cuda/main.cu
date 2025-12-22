@@ -1,19 +1,23 @@
-// =============================================================================
-// RAMBO Monte Carlo Integration - Base Serial Implementation
-// =============================================================================
-// Reference implementation using only standard C++ (no parallelization).
-// Useful for validation and as a performance baseline.
-// =============================================================================
+// RAMBO Monte Carlo Integrator using pure CUDA
+// This implementation is agnostic to the integrand kernel
+//
+// Build:
+//   mkdir build && cd build
+//   cmake ..
+//   make
+//
+// Or directly with nvcc:
+//   nvcc -O3 -o rambo_cuda main.cu
 
 #include <iostream>
-#include <iomanip>
-#include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <chrono>
+#include <string>
 #include <algorithm>
 
-#include "rambo_base.hpp"
-#include "integrands.hpp"
-#include "integrator.hpp"
+#include "integrator.cuh"
+#include "integrands.cuh"
 
 // =============================================================================
 // Benchmark helper
@@ -67,10 +71,15 @@ int main(int argc, char* argv[]) {
     const double cmEnergy = 1000.0;  // Center-of-mass energy in GeV
     constexpr int nParticles = 3;
     
+    // Get device info
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    
     std::cout << "======================================" << std::endl;
-    std::cout << "RAMBO Monte Carlo Integrator (Base)" << std::endl;
+    std::cout << "RAMBO Monte Carlo Integrator (CUDA)" << std::endl;
     std::cout << "======================================" << std::endl;
-    std::cout << "Compiled backend: CPU Serial" << std::endl;
+    std::cout << "Compiled backend: CUDA GPU" << std::endl;
+    std::cout << "Device: " << prop.name << std::endl;
     std::cout << "Number of events: " << nEvents << std::endl;
     std::cout << "Random seed: " << seed << std::endl;
     std::cout << "Center-of-mass energy: " << cmEnergy << " GeV" << std::endl;
@@ -85,7 +94,7 @@ int main(int argc, char* argv[]) {
     
     // Run benchmark
     runBenchmark<EggholderIntegrand, nParticles>(
-        "CPU Serial", nEvents, cmEnergy, masses, integrand, seed);
+        "CUDA GPU", nEvents, cmEnergy, masses, integrand, seed);
     
     std::cout << "======================================" << std::endl;
     std::cout << "Benchmark complete." << std::endl;
