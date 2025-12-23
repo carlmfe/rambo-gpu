@@ -4,21 +4,23 @@ GPU-accelerated implementation using the Kokkos performance portability library.
 
 ## Requirements
 
-- CMake ≥ 3.16
-- C++17 compatible compiler
+- CMake ≥ 3.18
+- C++20 compatible compiler
 - Kokkos library (with CUDA and/or OpenMP backend)
-- Environment module: `kokkos/dev`
 
 ## Build
 
 ```bash
-# Load the Kokkos module (handled automatically by CMake)
 mkdir build && cd build
-cmake ..
+
+# Specify Kokkos installation path
+cmake -DKokkos_ROOT=/path/to/kokkos ..
+make -j4
+
+# Or use CMAKE_PREFIX_PATH
+cmake -DCMAKE_PREFIX_PATH=/path/to/kokkos ..
 make -j4
 ```
-
-The CMake configuration automatically loads the `kokkos/dev` module via `find_package(EnvModules)`.
 
 ## Run
 

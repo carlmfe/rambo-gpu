@@ -30,6 +30,12 @@ gpu-testing/
 │   ├── integrator.cuh
 │   └── main.cu
 │
+├── sycl/                 # SYCL implementation (CUDA backend)
+│   ├── rambo_sycl.hpp
+│   ├── integrands.hpp
+│   ├── integrator.hpp
+│   └── main.cpp
+│
 ├── benchmark.sh          # Performance comparison script
 └── check_gpu.sh          # GPU utilization verification
 ```
@@ -101,19 +107,57 @@ Verifies that a program actually uses the GPU during execution.
 
 ## Quick Start
 
+### Prerequisites
+
+- CMake 3.18+
+- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
+- For GPU implementations: CUDA Toolkit, Kokkos, Alpaka, and/or SYCL compiler
+
+### Building Individual Projects
+
 ```bash
-# Build all implementations
-cd gpu-testing
-for dir in base kokkos alpaka cuda; do
-    cd $dir && mkdir -p build && cd build && cmake .. && make -j4 && cd ../..
-done
+# Base (always works - no external dependencies)
+cd base && mkdir build && cd build && cmake .. && make -j4
 
-# Run benchmark comparison
-./benchmark.sh 10000000
+# CUDA (auto-detects nvcc in PATH)
+cd cuda && mkdir build && cd build && cmake .. && make -j4
 
-# Verify GPU usage
-./check_gpu.sh ./cuda/build/rambo_cuda 10000000 5489
+# Kokkos (specify installation path)
+cd kokkos && mkdir build && cd build
+cmake -DKokkos_ROOT=/path/to/kokkos .. && make -j4
+
+# Alpaka (specify installation path and backend)
+cd alpaka && mkdir build && cd build
+cmake -Dalpaka_ROOT=/path/to/alpaka -DALPAKA_BACKEND=CUDA .. && make -j4
+
+# SYCL (requires SYCL-enabled clang++)
+cd sycl && mkdir build && cd build
+cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ .. && make -j4
 ```
+
+### Using the Benchmark Script
+
+```bash
+# Set environment variables for library paths
+export KOKKOS_ROOT=/path/to/kokkos
+export ALPAKA_ROOT=/path/to/alpaka
+export SYCL_CXX=/path/to/sycl/clang++
+
+# Run benchmark (builds all available implementations)
+./benchmark.sh 10000000    # 10M events
+./benchmark.sh 10000000 42 5  # 10M events, seed 42, 5 runs
+```
+
+### macOS Support
+
+The base implementation works on macOS with any C++20 compiler:
+
+```bash
+cd base && mkdir build && cd build
+cmake .. && make -j4
+```
+
+GPU implementations (CUDA, SYCL with CUDA backend) require Linux with NVIDIA drivers.
 
 ## Performance Reference
 
@@ -122,6 +166,7 @@ done
 | Base (Serial) | ~3M ev/s | CPU single-thread |
 | Kokkos (CUDA) | ~85M ev/s | RTX 2000 Ada |
 | Alpaka (CUDA) | ~115M ev/s | RTX 2000 Ada |
-| CUDA | ~140M ev/s | RTX 2000 Ada |
+| CUDA | ~165M ev/s | RTX 2000 Ada |
+| SYCL (CUDA) | ~155M ev/s | RTX 2000 Ada |
 
 *Results vary by hardware and event count.*

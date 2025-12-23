@@ -4,10 +4,9 @@ GPU-accelerated implementation using the Alpaka 2.0.0 portability library.
 
 ## Requirements
 
-- CMake ≥ 3.25
-- C++20 compatible compiler (for concepts)
+- CMake ≥ 3.18
+- C++20 compatible compiler
 - Alpaka 2.0.0 library
-- Environment module: `alpaka/2.0.0_cuda`
 - For CUDA backend: CUDA Toolkit 11.0+
 
 ## Build
@@ -15,19 +14,17 @@ GPU-accelerated implementation using the Alpaka 2.0.0 portability library.
 ```bash
 mkdir build && cd build
 
-# CUDA backend (default)
-cmake -DALPAKA_BACKEND=CUDA ..
+# CUDA backend (requires alpaka installation path)
+cmake -DALPAKA_BACKEND=CUDA -Dalpaka_ROOT=/path/to/alpaka ..
 
-# CPU Serial backend
-cmake -DALPAKA_BACKEND=CPU ..
+# CPU Serial backend (default)
+cmake -DALPAKA_BACKEND=CPU -Dalpaka_ROOT=/path/to/alpaka ..
 
 # OpenMP backend
-cmake -DALPAKA_BACKEND=OMP ..
+cmake -DALPAKA_BACKEND=OMP -Dalpaka_ROOT=/path/to/alpaka ..
 
 make -j4
 ```
-
-The CMake configuration automatically loads the `alpaka/2.0.0_cuda` module.
 
 ## Run
 

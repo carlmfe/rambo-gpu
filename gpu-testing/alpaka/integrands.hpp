@@ -87,6 +87,84 @@ struct MandelstamSIntegrand {
     }
 };
 
+// -----------------------------------------------------------------------------
+// DrellYanIntegrand: Parton-level Drell-Yan cross-section (q qbar -> e+ e-)
+// -----------------------------------------------------------------------------
+// Computes the differential cross-section for quark-antiquark annihilation
+// into an electron-positron pair via virtual photon exchange.
+//
+// Matrix element squared (averaged over initial spins, summed over final):
+//   |M|^2 = 2 * e^4 * e_q^2 * (t^2 + u^2) / s^2
+//
+// The integrated parton-level cross-section is:
+//   sigma = 4 * pi * alpha^2 * e_q^2 / (3 * s)
+//
+// RAMBO Integration:
+// The 2-body RAMBO phase space has weight: W_RAMBO = pi/2
+// Cross-section: sigma = (1/2s) * int |M|^2 * d(LIPS)
+//              = (1/2s) * <|M|^2 * W_RAMBO / (4*pi^2)>
+// -----------------------------------------------------------------------------
+struct DrellYanIntegrand {
+    double quarkCharge;      // Quark charge in units of e (e.g., 2/3 for up)
+    double alphaEM;          // Fine structure constant (~1/137)
+    
+    ALPAKA_FN_HOST_ACC DrellYanIntegrand(double eq = 2.0/3.0, double alpha = 1.0/137.035999)
+        : quarkCharge(eq), alphaEM(alpha) {}
+    
+    ALPAKA_FN_HOST_ACC auto evaluate(const double momenta[][4]) const -> double {
+        // Total 4-momentum (= incoming q + qbar)
+        double Ptot[4];
+        for (int mu = 0; mu < 4; ++mu) {
+            Ptot[mu] = momenta[0][mu] + momenta[1][mu];
+        }
+        
+        // Mandelstam s = (k1 + k2)^2
+        double s = Ptot[0]*Ptot[0] - Ptot[1]*Ptot[1] 
+                 - Ptot[2]*Ptot[2] - Ptot[3]*Ptot[3];
+        
+        if (s <= 0.0) return 0.0;
+        
+        double sqrtS = std::sqrt(s);
+        
+        // Incoming parton momenta in CM frame
+        double p1[4] = {sqrtS/2.0, 0.0, 0.0, +sqrtS/2.0};
+        
+        // Outgoing momenta
+        const double* k1 = momenta[0];
+        const double* k2 = momenta[1];
+        
+        // Dot product with Minkowski metric (+,-,-,-)
+        auto dot = [](const double a[4], const double b[4]) -> double {
+            return a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3];
+        };
+        
+        // Mandelstam t and u
+        double t = -2.0 * dot(p1, k1);
+        double u = -2.0 * dot(p1, k2);
+        
+        // |M|^2 = 2 * e^4 * e_q^2 * (t^2 + u^2) / s^2
+        constexpr double PI = 3.14159265358979323846;
+        double e4 = 16.0 * PI * PI * alphaEM * alphaEM;
+        double eq2 = quarkCharge * quarkCharge;
+        double Msq = 2.0 * e4 * eq2 * (t*t + u*u) / (s*s);
+        
+        // Cross-section integrand: |M|^2 / (2s * 4*pi^2)
+        double dsigma = Msq / (2.0 * s) / (4.0 * PI * PI);
+        
+        // Convert to millibarns: hbar^2*c^2 = 0.3894 GeV^2 * mb
+        constexpr double hbarc2 = 0.3893793656;
+        
+        return dsigma * hbarc2;
+    }
+    
+    // Analytic integrated cross-section for validation
+    static auto analyticCrossSection(double s, double eq, double alpha) -> double {
+        constexpr double PI = 3.14159265358979323846;
+        constexpr double hbarc2 = 0.3893793656;
+        return 4.0 * PI * alpha * alpha * eq * eq / (3.0 * s) * hbarc2;
+    }
+};
+
 // =============================================================================
 // Backwards compatibility aliases
 // =============================================================================

@@ -41,8 +41,10 @@ __global__ void MonteCarloKernel(
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // Initialize RNG state per thread
-    uint64_t rngState = baseSeed + idx;
+    // Initialize RNG state per thread with better seed mixing
+    // Use hash-like mixing to avoid correlation between adjacent threads
+    uint64_t rngState = baseSeed ^ (uint64_t(idx) * 2685821657736338717ULL);
+    if (rngState == 0) rngState = baseSeed + 1;  // Avoid zero state
     
     double localSum = 0.0;
     double localSum2 = 0.0;

@@ -68,8 +68,8 @@ int main(int argc, char* argv[]) {
         // Parse command line arguments
         const int64_t nEvents = (argc > 1) ? std::stoll(argv[1]) : 100000;
         const uint64_t seed = (argc > 2) ? std::stoull(argv[2]) : 5489ULL;
-        const double cmEnergy = 1000.0;  // Center-of-mass energy in GeV
-        constexpr int nParticles = 3;
+        const double cmEnergy = 91.2;  // Z-pole energy in GeV (classic Drell-Yan)
+        constexpr int nParticles = 2;   // e+ e- final state
         
         // Get backend name from Kokkos
         const std::string backendName = Kokkos::DefaultExecutionSpace::name();
@@ -84,16 +84,40 @@ int main(int argc, char* argv[]) {
         std::cout << "Number of particles: " << nParticles << std::endl;
         std::cout << std::endl;
         
-        // Set up particle masses (non-zero for testing massive RAMBO)
-        // Using realistic masses: ~electron, ~muon, ~pion scale in GeV
-        double masses[nParticles] = {0.5, 100.0, 140.0};
+        // Set up particle masses for e+ e- (electron mass in GeV)
+        constexpr double electronMass = 0.000511;
+        double masses[nParticles] = {electronMass, electronMass};
         
-        // Create integrand (uses default lambdaSquared = 1000^2)
-        EggholderIntegrand integrand;
+        // Create Drell-Yan integrand (up-quark charge = 2/3)
+        const double quarkCharge = 2.0 / 3.0;
+        const double alphaEM = 1.0 / 137.035999;
+        DrellYanIntegrand integrand(quarkCharge, alphaEM);
+        
+        std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Drell-Yan Process: q qbar -> gamma* -> e+ e-" << std::endl;
+        std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Quark charge (e_q): " << quarkCharge << std::endl;
+        std::cout << "Fine structure constant (alpha): " << alphaEM << std::endl;
+        std::cout << std::endl;
         
         // Run benchmark
-        runBenchmark<EggholderIntegrand, nParticles>(
+        runBenchmark<DrellYanIntegrand, nParticles>(
             backendName, nEvents, cmEnergy, masses, integrand, seed);
+        
+        // Analytic verification
+        std::cout << "========================================" << std::endl;
+        std::cout << "Analytic Verification" << std::endl;
+        std::cout << "========================================" << std::endl;
+        double s = cmEnergy * cmEnergy;
+        double analyticSigma = DrellYanIntegrand::analyticCrossSection(s, quarkCharge, alphaEM);
+        std::cout << std::scientific;
+        std::cout << "Analytic cross-section:" << std::endl;
+        std::cout << "  sigma = 4*pi*alpha^2*e_q^2 / (3*s) * hbarc^2" << std::endl;
+        std::cout << "  s = " << s << " GeV^2" << std::endl;
+        std::cout << "  sigma = " << analyticSigma << " mb" << std::endl;
+        std::cout << "  sigma = " << analyticSigma * 1e6 << " nb" << std::endl;
+        std::cout << "  sigma = " << analyticSigma * 1e9 << " pb" << std::endl;
+        std::cout << std::endl;
         
         std::cout << "======================================" << std::endl;
         std::cout << "Benchmark complete." << std::endl;
