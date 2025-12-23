@@ -22,7 +22,13 @@
 // =============================================================================
 #if defined(ALPAKA_USE_CUDA)
     using DefaultAccTag = alpaka::TagGpuCudaRt;
-    constexpr const char* BACKEND_NAME = "CUDA GPU";
+    constexpr const char* BACKEND_NAME = "CUDA GPU (NVIDIA)";
+#elif defined(ALPAKA_USE_HIP)
+    using DefaultAccTag = alpaka::TagGpuHipRt;
+    constexpr const char* BACKEND_NAME = "HIP GPU (AMD)";
+#elif defined(ALPAKA_USE_SYCL)
+    using DefaultAccTag = alpaka::TagGpuSyclIntel;
+    constexpr const char* BACKEND_NAME = "SYCL GPU (Intel)";
 #elif defined(ALPAKA_USE_CPU_OMP)
     using DefaultAccTag = alpaka::TagCpuOmp2Blocks;
     constexpr const char* BACKEND_NAME = "CPU OpenMP";

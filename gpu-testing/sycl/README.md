@@ -1,16 +1,24 @@
 # RAMBO SYCL Implementation
 
-High-performance GPU implementation of the RAMBO Monte Carlo integrator using SYCL with CUDA backend.
+High-performance **multi-vendor GPU** implementation of the RAMBO Monte Carlo integrator using SYCL.
 
 ## Overview
 
-This implementation uses SYCL (via clang++ with CUDA backend) to perform parallel Monte Carlo integration on NVIDIA GPUs. The structure mirrors the base/, kokkos/, alpaka/, and cuda/ implementations for easy comparison and maintenance.
+This implementation uses SYCL to perform parallel Monte Carlo integration on **NVIDIA, AMD, and Intel GPUs**. SYCL provides portability across GPU vendors while maintaining high performance. The structure mirrors the base/, kokkos/, alpaka/, and cuda/ implementations for easy comparison and maintenance.
+
+## Supported GPU Vendors
+
+| Vendor | Backend | Compiler | Auto-Detection |
+|--------|---------|----------|----------------|
+| **NVIDIA** | CUDA | Intel DPC++/LLVM (clang++) | ✅ via nvidia-smi |
+| **AMD** | HIP | Intel DPC++/LLVM (clang++) | ✅ via rocminfo |
+| **Intel** | Native | Intel DPC++ (icpx) | ✅ automatic |
 
 ## File Structure
 
 ```
 sycl/
-├── CMakeLists.txt      # Build configuration for SYCL/CUDA
+├── CMakeLists.txt      # Multi-vendor GPU build configuration
 ├── integrands.hpp      # Physics integrands (DrellYan, Eggholder, etc.)
 ├── integrator.hpp      # RamboIntegrator class with SYCL parallel_for
 ├── main.cpp            # Entry point with benchmark and verification
@@ -20,42 +28,65 @@ sycl/
 
 ## Prerequisites
 
-- SYCL compiler (clang++ with CUDA support, Intel DPC++, or AdaptiveCpp)
-- CUDA-capable NVIDIA GPU (for CUDA backend)
+- SYCL compiler:
+  - **NVIDIA**: Intel DPC++/LLVM with CUDA support, or AdaptiveCpp
+  - **AMD**: Intel DPC++/LLVM with HIP support, or AdaptiveCpp
+  - **Intel**: Intel oneAPI DPC++ (icpx)
 - CMake 3.18+
 
 ## Build Instructions
 
+### NVIDIA GPUs (CUDA backend)
 ```bash
 cd gpu-testing/sycl
 mkdir build && cd build
 
-# Specify SYCL compiler (Intel DPC++/LLVM with CUDA backend)
-cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ ..
-make
-
-# Alternative: Specify backend explicitly
+# Auto-detect GPU architecture
 cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ -DSYCL_BACKEND=CUDA ..
 make
 
-# Intel GPU backend
-cmake -DCMAKE_CXX_COMPILER=icpx -DSYCL_BACKEND=INTEL ..
+# Or specify architecture manually
+cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ \
+      -DSYCL_BACKEND=CUDA \
+      -DCUDA_GPU_ARCH=sm_89 ..
+make
+```
+
+### AMD GPUs (HIP backend)
+```bash
+# Auto-detect GPU architecture
+cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ -DSYCL_BACKEND=HIP ..
 make
 
-# Run with default parameters (100000 events, seed 5489)
-./rambo_sycl
+# Or specify architecture manually
+cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ \
+      -DSYCL_BACKEND=HIP \
+      -DHIP_GPU_ARCH=gfx1100 ..
+make
+```
 
-# Run with custom parameters
-./rambo_sycl 1000000 12345
+### Intel GPUs
+```bash
+cmake -DCMAKE_CXX_COMPILER=icpx -DSYCL_BACKEND=INTEL ..
+make
+```
+
+### AdaptiveCpp (formerly hipSYCL) - All vendors
+```bash
+cmake -DCMAKE_CXX_COMPILER=acpp \
+      -DSYCL_BACKEND=ADAPTIVECPP \
+      -DADAPTIVECPP_TARGETS="cuda:sm_89" ..  # or "hip:gfx1100"
+make
 ```
 
 ## Backend Selection
 
-| Backend | Compiler | CMake Flags |
-|---------|----------|-------------|
-| CUDA | clang++ (SYCL) | `-DSYCL_BACKEND=CUDA` |
-| Intel GPU | icpx | `-DSYCL_BACKEND=INTEL` |
-| AdaptiveCpp | syclcc | `-DSYCL_BACKEND=ADAPTIVECPP` |
+| Backend | Vendor | CMake Flags | Architecture |
+|---------|--------|-------------|--------------|
+| CUDA | NVIDIA | `-DSYCL_BACKEND=CUDA` | `-DCUDA_GPU_ARCH=sm_XX` |
+| HIP | AMD | `-DSYCL_BACKEND=HIP` | `-DHIP_GPU_ARCH=gfxXXXX` |
+| INTEL | Intel | `-DSYCL_BACKEND=INTEL` | Auto-detected |
+| ADAPTIVECPP | Any | `-DSYCL_BACKEND=ADAPTIVECPP` | `-DADAPTIVECPP_TARGETS=...` |
 
 ## Usage
 
@@ -66,18 +97,26 @@ make
 - `nEvents`: Number of Monte Carlo events (default: 100000)
 - `seed`: Random seed for reproducibility (default: 5489)
 
-## GPU Architecture
+## GPU Architecture Reference
 
-By default, CUDA GPU architecture is **auto-detected** using `nvidia-smi`. To specify manually:
+### NVIDIA (CUDA)
+| Architecture | GPUs |
+|--------------|------|
+| sm_80 | A100, RTX 30xx (GA102) |
+| sm_86 | RTX 30xx (GA10x) |
+| sm_89 | RTX 40xx, RTX Ada |
+| sm_90 | H100 |
 
-```bash
-cmake -DCUDA_GPU_ARCH=sm_89 ..  # For RTX 40xx / Ada
-cmake -DCUDA_GPU_ARCH=sm_86 ..  # For RTX 30xx
-cmake -DCUDA_GPU_ARCH=sm_80 ..  # For A100 / RTX 30xx
-cmake -DCUDA_GPU_ARCH=native .. # Auto-detect (default)
-```
+Note: CUDA 13.0+ removed support for sm_70 (Volta) and sm_75 (Turing).
 
-Note: CUDA 13.0+ removed support for `sm_70` (Volta) and `sm_75` (Turing).
+### AMD (HIP)
+| Architecture | GPUs |
+|--------------|------|
+| gfx906 | MI50, Radeon VII |
+| gfx908 | MI100 |
+| gfx90a | MI210, MI250 |
+| gfx1030 | RX 6800, 6900 |
+| gfx1100 | RX 7900 |
 
 ## Physics
 
@@ -102,47 +141,13 @@ The Monte Carlo result should converge to this value as the number of events inc
 2. **Integrands** (`integrands.hpp`): Various physics functions to integrate
 3. **RamboIntegrator** (`integrator.hpp`): SYCL-based parallel Monte Carlo integration
 
-### SYCL Features Used
+### RNG Strategy
 
-- `sycl::queue` with GPU selector
-- USM (Unified Shared Memory) for device memory allocation
-- `parallel_for` with `nd_range` for work distribution
-- `atomic_ref` for thread-safe accumulation
-- Grid-stride loops for handling large event counts
+Uses `std::minstd_rand` for portability across GPU vendors. Each work-item gets a unique seed based on its global index.
 
-### Performance Considerations
+### Performance
 
-- Uses XorShift64 RNG for fast, reproducible random numbers
-- Hash-based seed mixing to avoid RNG correlation between threads
-- Atomic operations for sum reduction (simple but effective)
-- Warmup run before timed benchmark
-
-## Comparison with Other Implementations
-
-| Feature | SYCL | CUDA | Kokkos | Alpaka |
-|---------|------|------|--------|--------|
-| Language | C++ | CUDA C++ | C++ | C++ |
-| Memory Model | USM | Explicit | Views | Buffers |
-| Kernel Launch | parallel_for | <<<>>> | parallel_reduce | exec<> |
-| Reduction | atomic_ref | atomicAdd | Sum reducer | Tree reduction |
-| Portability | High | NVIDIA only | High | High |
-
-## Troubleshooting
-
-### Wrong GPU architecture
-```bash
-# Check your GPU's compute capability
-nvidia-smi --query-gpu=compute_cap --format=csv
-
-# Rebuild with correct architecture
-cmake -DCUDA_GPU_ARCH=sm_XX ..
-```
-
-### Compiler not found
-```bash
-# Verify clang++ is in PATH after loading module
-which clang++
-
-# Check SYCL support
-clang++ --version
-```
+SYCL provides near-native performance while maintaining portability:
+- NVIDIA: Comparable to native CUDA
+- AMD: Comparable to native HIP
+- Intel: Native performance on Intel GPUs

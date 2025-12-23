@@ -32,12 +32,14 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 # =============================================================================
 # Backend Selection
 # =============================================================================
-# Use: cmake -DALPAKA_BACKEND=CUDA ..   (default on Linux with CUDA)
+# Use: cmake -DALPAKA_BACKEND=CUDA ..   (NVIDIA GPUs)
+#      cmake -DALPAKA_BACKEND=HIP ..    (AMD GPUs)
+#      cmake -DALPAKA_BACKEND=SYCL ..   (Intel GPUs, or portable)
 #      cmake -DALPAKA_BACKEND=CPU ..    (CPU serial, works everywhere)
-#      cmake -DALPAKA_BACKEND=OMP ..    (OpenMP threads)
+#      cmake -DALPAKA_BACKEND=OMP ..    (OpenMP threads on CPU)
 # =============================================================================
-set(ALPAKA_BACKEND "CPU" CACHE STRING "Alpaka backend: CUDA, CPU, OMP")
-set_property(CACHE ALPAKA_BACKEND PROPERTY STRINGS CUDA CPU OMP)
+set(ALPAKA_BACKEND "CPU" CACHE STRING "Alpaka backend: CUDA, HIP, SYCL, CPU, OMP")
+set_property(CACHE ALPAKA_BACKEND PROPERTY STRINGS CUDA HIP SYCL CPU OMP)
 message(STATUS "Alpaka backend: ${ALPAKA_BACKEND}")
 
 # =============================================================================
@@ -77,6 +79,48 @@ if(ALPAKA_BACKEND STREQUAL "CUDA")
 elseif(ALPAKA_BACKEND STREQUAL "CPU")
     set(alpaka_ACC_CPU_B_SEQ_T_SEQ_ENABLE ON CACHE BOOL "" FORCE)
     add_compile_definitions(ALPAKA_USE_CPU_SERIAL)
+
+elseif(ALPAKA_BACKEND STREQUAL "HIP")
+    # AMD GPU via HIP/ROCm
+    # Alpaka must be built with HIP support
+    set(alpaka_ACC_GPU_HIP_ENABLE ON CACHE BOOL "" FORCE)
+    
+    # Auto-detect AMD GPU architecture
+    set(HIP_GPU_ARCH "native" CACHE STRING "AMD GPU architecture: native (auto-detect), or gfxXXXX")
+    if(HIP_GPU_ARCH STREQUAL "native")
+        find_program(ROCMINFO rocminfo)
+        if(ROCMINFO)
+            execute_process(
+                COMMAND rocminfo
+                OUTPUT_VARIABLE ROCM_INFO_OUTPUT
+                ERROR_QUIET
+                RESULT_VARIABLE ROCMINFO_RESULT
+            )
+            if(ROCMINFO_RESULT EQUAL 0)
+                string(REGEX MATCH "gfx[0-9a-z]+" DETECTED_HIP_ARCH "${ROCM_INFO_OUTPUT}")
+                if(DETECTED_HIP_ARCH)
+                    set(HIP_GPU_ARCH "${DETECTED_HIP_ARCH}")
+                    message(STATUS "Auto-detected AMD GPU: ${HIP_GPU_ARCH}")
+                else()
+                    message(WARNING "Failed to parse AMD GPU, using gfx906")
+                    set(HIP_GPU_ARCH "gfx906")
+                endif()
+            endif()
+        else()
+            message(WARNING "rocminfo not found, using default gfx906")
+            set(HIP_GPU_ARCH "gfx906")
+        endif()
+    endif()
+    message(STATUS "HIP GPU architecture: ${HIP_GPU_ARCH}")
+    set(CMAKE_HIP_ARCHITECTURES ${HIP_GPU_ARCH} CACHE STRING "HIP architectures")
+    
+    add_compile_definitions(ALPAKA_USE_HIP)
+
+elseif(ALPAKA_BACKEND STREQUAL "SYCL")
+    # Intel GPU (or portable) via SYCL
+    # Alpaka must be built with SYCL support
+    set(alpaka_ACC_SYCL_ENABLE ON CACHE BOOL "" FORCE)
+    add_compile_definitions(ALPAKA_USE_SYCL)
     
 elseif(ALPAKA_BACKEND STREQUAL "OMP")
     find_package(OpenMP REQUIRED)

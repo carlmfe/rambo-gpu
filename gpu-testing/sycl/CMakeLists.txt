@@ -1,26 +1,29 @@
 cmake_minimum_required(VERSION 3.18)
 
 # =============================================================================
-# SYCL Configuration
+# SYCL Configuration - Multi-Vendor GPU Support
 # =============================================================================
-# SYCL requires a SYCL-enabled compiler (Intel DPC++, AdaptiveCpp, etc.)
+# SYCL is a portable standard that can target NVIDIA, AMD, and Intel GPUs.
 #
-# For Intel DPC++ with CUDA backend:
-#   export CXX=clang++  (from Intel LLVM/DPC++ build)
+# For NVIDIA GPUs (Intel DPC++/LLVM with CUDA backend):
 #   cmake -DSYCL_BACKEND=CUDA ..
 #
-# For Intel DPC++ with Intel GPU:
+# For AMD GPUs (Intel DPC++/LLVM with HIP backend):
+#   cmake -DSYCL_BACKEND=HIP ..
+#
+# For Intel GPUs (Intel DPC++ / oneAPI):
 #   cmake -DSYCL_BACKEND=INTEL ..
 #
-# For AdaptiveCpp (formerly hipSYCL):
-#   cmake -DSYCL_BACKEND=ADAPTIVECPP ..
+# For AdaptiveCpp (formerly hipSYCL) - supports multiple backends:
+#   cmake -DSYCL_BACKEND=ADAPTIVECPP -DADAPTIVECPP_TARGETS="cuda:sm_89" ..
+#   cmake -DSYCL_BACKEND=ADAPTIVECPP -DADAPTIVECPP_TARGETS="hip:gfx1100" ..
 # =============================================================================
 
 # =============================================================================
 # SYCL Backend Selection
 # =============================================================================
-set(SYCL_BACKEND "CUDA" CACHE STRING "SYCL backend: CUDA, INTEL, ADAPTIVECPP")
-set_property(CACHE SYCL_BACKEND PROPERTY STRINGS CUDA INTEL ADAPTIVECPP)
+set(SYCL_BACKEND "CUDA" CACHE STRING "SYCL backend: CUDA, HIP, INTEL, ADAPTIVECPP")
+set_property(CACHE SYCL_BACKEND PROPERTY STRINGS CUDA HIP INTEL ADAPTIVECPP)
 message(STATUS "SYCL backend: ${SYCL_BACKEND}")
 
 # =============================================================================
@@ -29,7 +32,7 @@ message(STATUS "SYCL backend: ${SYCL_BACKEND}")
 # Look for clang++ with SYCL support
 if(NOT DEFINED CMAKE_CXX_COMPILER)
     find_program(SYCL_COMPILER 
-        NAMES clang++ icpx syclcc
+        NAMES clang++ icpx acpp syclcc
         HINTS ENV PATH
         DOC "SYCL-enabled C++ compiler"
     )
@@ -71,14 +74,20 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 # =============================================================================
-# CUDA GPU Architecture (for CUDA backend)
+# GPU Architecture Detection (Multi-Vendor)
 # =============================================================================
-# Common values: sm_80 (Ampere), sm_86 (GA102), sm_89 (Ada), sm_90 (Hopper)
-# Note: sm_70 (Volta) and sm_75 (Turing) were removed in CUDA 13.0
-# Set to "native" for auto-detection, or specify manually (e.g., sm_89)
-set(CUDA_GPU_ARCH "native" CACHE STRING "CUDA GPU architecture: native (auto-detect), or sm_XX")
+# NVIDIA: sm_80, sm_86, sm_89, sm_90 (use nvidia-smi to detect)
+# AMD: gfx906, gfx908, gfx90a, gfx1030, gfx1100 (use rocminfo to detect)
+# Intel: auto-detected by the compiler
+# =============================================================================
 
-# Auto-detect GPU architecture if set to "native"
+# NVIDIA GPU architecture
+set(CUDA_GPU_ARCH "native" CACHE STRING "NVIDIA GPU architecture: native (auto-detect), or sm_XX")
+
+# AMD GPU architecture  
+set(HIP_GPU_ARCH "native" CACHE STRING "AMD GPU architecture: native (auto-detect), or gfxXXXX")
+
+# Auto-detect NVIDIA GPU architecture
 if(CUDA_GPU_ARCH STREQUAL "native" AND SYCL_BACKEND STREQUAL "CUDA")
     find_program(NVIDIA_SMI nvidia-smi)
     if(NVIDIA_SMI)
@@ -90,19 +99,46 @@ if(CUDA_GPU_ARCH STREQUAL "native" AND SYCL_BACKEND STREQUAL "CUDA")
             RESULT_VARIABLE NVIDIA_SMI_RESULT
         )
         if(NVIDIA_SMI_RESULT EQUAL 0 AND GPU_COMPUTE_CAP)
-            # Handle multiple GPUs - take the first one
             string(REGEX MATCH "^[0-9]+\\.[0-9]+" GPU_COMPUTE_CAP "${GPU_COMPUTE_CAP}")
-            # Convert 8.9 -> sm_89
             string(REPLACE "." "" GPU_ARCH_NUM "${GPU_COMPUTE_CAP}")
             set(CUDA_GPU_ARCH "sm_${GPU_ARCH_NUM}")
-            message(STATUS "Auto-detected GPU compute capability: ${GPU_COMPUTE_CAP} -> ${CUDA_GPU_ARCH}")
+            message(STATUS "Auto-detected NVIDIA GPU: ${GPU_COMPUTE_CAP} -> ${CUDA_GPU_ARCH}")
         else()
-            message(WARNING "Failed to detect GPU architecture, using default sm_80")
+            message(WARNING "Failed to detect NVIDIA GPU, using default sm_80")
             set(CUDA_GPU_ARCH "sm_80")
         endif()
     else()
-        message(WARNING "nvidia-smi not found, using default architecture sm_80")
+        message(WARNING "nvidia-smi not found, using default sm_80")
         set(CUDA_GPU_ARCH "sm_80")
+    endif()
+endif()
+
+# Auto-detect AMD GPU architecture
+if(HIP_GPU_ARCH STREQUAL "native" AND SYCL_BACKEND STREQUAL "HIP")
+    find_program(ROCMINFO rocminfo)
+    if(ROCMINFO)
+        execute_process(
+            COMMAND rocminfo
+            OUTPUT_VARIABLE ROCM_INFO_OUTPUT
+            ERROR_QUIET
+            RESULT_VARIABLE ROCMINFO_RESULT
+        )
+        if(ROCMINFO_RESULT EQUAL 0)
+            # Extract gfx architecture from rocminfo output
+            string(REGEX MATCH "gfx[0-9a-z]+" HIP_GPU_ARCH "${ROCM_INFO_OUTPUT}")
+            if(HIP_GPU_ARCH)
+                message(STATUS "Auto-detected AMD GPU: ${HIP_GPU_ARCH}")
+            else()
+                message(WARNING "Failed to parse AMD GPU architecture, using default gfx906")
+                set(HIP_GPU_ARCH "gfx906")
+            endif()
+        else()
+            message(WARNING "rocminfo failed, using default gfx906")
+            set(HIP_GPU_ARCH "gfx906")
+        endif()
+    else()
+        message(WARNING "rocminfo not found, using default gfx906")
+        set(HIP_GPU_ARCH "gfx906")
     endif()
 endif()
 
@@ -116,7 +152,10 @@ target_include_directories(rambo_sycl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Backend-specific flags
 # =============================================================================
 if(SYCL_BACKEND STREQUAL "CUDA")
-    # Intel DPC++ / Intel LLVM with CUDA backend
+    # Intel DPC++ / Intel LLVM with CUDA backend (NVIDIA GPUs)
+    message(STATUS "Configuring for NVIDIA GPU with CUDA backend")
+    message(STATUS "CUDA GPU architecture: ${CUDA_GPU_ARCH}")
+    
     target_compile_options(rambo_sycl PRIVATE 
         -fsycl
         -fsycl-targets=nvptx64-nvidia-cuda
@@ -130,9 +169,35 @@ if(SYCL_BACKEND STREQUAL "CUDA")
         -Xsycl-target-backend 
         --cuda-gpu-arch=${CUDA_GPU_ARCH}
     )
+    target_compile_definitions(rambo_sycl PRIVATE SYCL_BACKEND_CUDA)
+    
+elseif(SYCL_BACKEND STREQUAL "HIP")
+    # Intel DPC++ / Intel LLVM with HIP backend (AMD GPUs)
+    message(STATUS "Configuring for AMD GPU with HIP backend")
+    message(STATUS "HIP GPU architecture: ${HIP_GPU_ARCH}")
+    
+    target_compile_options(rambo_sycl PRIVATE 
+        -fsycl
+        -fsycl-targets=amdgcn-amd-amdhsa
+        -Xsycl-target-backend
+        --offload-arch=${HIP_GPU_ARCH}
+        $<$<CONFIG:Release>:-O3>
+    )
+    target_link_options(rambo_sycl PRIVATE
+        -fsycl
+        -fsycl-targets=amdgcn-amd-amdhsa
+        -Xsycl-target-backend
+        --offload-arch=${HIP_GPU_ARCH}
+    )
+    target_compile_definitions(rambo_sycl PRIVATE SYCL_BACKEND_HIP)
     
 elseif(SYCL_BACKEND STREQUAL "INTEL")
-    # Intel DPC++ for Intel GPUs
+    # Intel DPC++ for Intel GPUs (different generations)
+    message(STATUS "Configuring for Intel GPU")
+    
+    # Intel GPU architecture selection (optional)
+    set(INTEL_GPU_ARCH "" CACHE STRING "Intel GPU architecture: empty for auto, or specific device")
+    
     target_compile_options(rambo_sycl PRIVATE 
         -fsycl
         $<$<CONFIG:Release>:-O3>
@@ -140,11 +205,25 @@ elseif(SYCL_BACKEND STREQUAL "INTEL")
     target_link_options(rambo_sycl PRIVATE
         -fsycl
     )
+    target_compile_definitions(rambo_sycl PRIVATE SYCL_BACKEND_INTEL)
     
 elseif(SYCL_BACKEND STREQUAL "ADAPTIVECPP")
-    # AdaptiveCpp (formerly hipSYCL)
+    # AdaptiveCpp (formerly hipSYCL) - portable across vendors
+    message(STATUS "Configuring with AdaptiveCpp")
+    
+    # AdaptiveCpp target specification
+    # Examples: "cuda:sm_89", "hip:gfx1100", "omp", "generic"
+    set(ADAPTIVECPP_TARGETS "" CACHE STRING "AdaptiveCpp targets (e.g., cuda:sm_89, hip:gfx1100)")
+    if(ADAPTIVECPP_TARGETS)
+        message(STATUS "AdaptiveCpp targets: ${ADAPTIVECPP_TARGETS}")
+    endif()
+    
     find_package(AdaptiveCpp REQUIRED)
     add_sycl_to_target(TARGET rambo_sycl)
+    target_compile_definitions(rambo_sycl PRIVATE SYCL_BACKEND_ADAPTIVECPP)
+    
+else()
+    message(FATAL_ERROR "Unknown SYCL backend: ${SYCL_BACKEND}. Use CUDA, HIP, INTEL, or ADAPTIVECPP.")
 endif()
 
 # =============================================================================
@@ -157,8 +236,14 @@ endif()
 # =============================================================================
 # Print configuration
 # =============================================================================
+message(STATUS "")
+message(STATUS "=== SYCL Build Configuration ===")
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "SYCL Backend: ${SYCL_BACKEND}")
 if(SYCL_BACKEND STREQUAL "CUDA")
-    message(STATUS "CUDA GPU architecture: ${CUDA_GPU_ARCH}")
+    message(STATUS "GPU Architecture: ${CUDA_GPU_ARCH}")
+elseif(SYCL_BACKEND STREQUAL "HIP")
+    message(STATUS "GPU Architecture: ${HIP_GPU_ARCH}")
 endif()
+message(STATUS "================================")
