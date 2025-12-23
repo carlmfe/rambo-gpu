@@ -2,12 +2,23 @@
 # =============================================================================
 # RAMBO GPU Performance Benchmark Script
 # =============================================================================
-# Compares performance of Kokkos, Alpaka, and CUDA implementations
+# Compares performance of Base, Kokkos, Alpaka, CUDA, and SYCL implementations
 #
-# Usage: ./benchmark.sh [num_events] [seed]
-#        ./benchmark.sh              # Default: 10M events, seed 5489
+# Usage: ./benchmark.sh [num_events] [seed] [num_runs]
+#        ./benchmark.sh              # Default: 10M events, seed 5489, 3 runs
 #        ./benchmark.sh 100000000    # 100M events
 #        ./benchmark.sh 10000000 42  # Custom seed
+#        ./benchmark.sh 10000000 5489 5  # 5 runs
+#
+# Environment Variables (optional):
+#   KOKKOS_ROOT   - Path to Kokkos installation
+#   ALPAKA_ROOT   - Path to Alpaka installation  
+#   SYCL_CXX      - Path to SYCL compiler (clang++)
+#
+# Example:
+#   export KOKKOS_ROOT=/path/to/kokkos
+#   export ALPAKA_ROOT=/path/to/alpaka
+#   ./benchmark.sh
 # =============================================================================
 
 set -e
@@ -151,21 +162,43 @@ BASE_OK=false
 KOKKOS_OK=false
 ALPAKA_OK=false
 CUDA_OK=false
+SYCL_OK=false
 
+# Base always builds (no dependencies)
 if build_project "Base (Serial)" "$SCRIPT_DIR/base"; then
     BASE_OK=true
 fi
 
-if build_project "Kokkos" "$SCRIPT_DIR/kokkos"; then
+# Kokkos - use KOKKOS_ROOT if set, otherwise try to find it
+KOKKOS_CMAKE_ARGS=""
+if [ -n "$KOKKOS_ROOT" ]; then
+    KOKKOS_CMAKE_ARGS="-DKokkos_ROOT=$KOKKOS_ROOT"
+fi
+if build_project "Kokkos" "$SCRIPT_DIR/kokkos" "$KOKKOS_CMAKE_ARGS"; then
     KOKKOS_OK=true
 fi
 
-if build_project "Alpaka (CUDA)" "$SCRIPT_DIR/alpaka" "-DALPAKA_BACKEND=CUDA"; then
+# Alpaka - use ALPAKA_ROOT if set (alias alpaka_ROOT for CMake)
+ALPAKA_CMAKE_ARGS="-DALPAKA_BACKEND=CUDA"
+if [ -n "$ALPAKA_ROOT" ]; then
+    ALPAKA_CMAKE_ARGS="$ALPAKA_CMAKE_ARGS -Dalpaka_ROOT=$ALPAKA_ROOT"
+fi
+if build_project "Alpaka (CUDA)" "$SCRIPT_DIR/alpaka" "$ALPAKA_CMAKE_ARGS"; then
     ALPAKA_OK=true
 fi
 
+# CUDA - auto-detects nvcc
 if build_project "CUDA" "$SCRIPT_DIR/cuda"; then
     CUDA_OK=true
+fi
+
+# SYCL - use SYCL_CXX if set
+SYCL_CMAKE_ARGS=""
+if [ -n "$SYCL_CXX" ]; then
+    SYCL_CMAKE_ARGS="-DCMAKE_CXX_COMPILER=$SYCL_CXX"
+fi
+if build_project "SYCL" "$SCRIPT_DIR/sycl" "$SYCL_CMAKE_ARGS"; then
+    SYCL_OK=true
 fi
 
 echo ""
@@ -186,6 +219,10 @@ if $CUDA_OK; then
     verify_gpu "CUDA" "$SCRIPT_DIR/cuda/build/rambo_cuda"
 fi
 
+if $SYCL_OK; then
+    verify_gpu "SYCL" "$SCRIPT_DIR/sycl/build/rambo_sycl"
+fi
+
 echo -e "${CYAN}========================================${NC}"
 echo -e "${CYAN}Phase 3: Performance Benchmarks${NC}"
 echo -e "${CYAN}========================================${NC}"
@@ -196,6 +233,7 @@ BASE_avg=0
 KOKKOS_avg=0
 ALPAKA_avg=0
 CUDA_avg=0
+SYCL_avg=0
 
 if $BASE_OK; then
     run_benchmark "BASE" "$SCRIPT_DIR/base/build/rambo_base" "$NUM_RUNS"
@@ -211,6 +249,10 @@ fi
 
 if $CUDA_OK; then
     run_benchmark "CUDA" "$SCRIPT_DIR/cuda/build/rambo_cuda" "$NUM_RUNS"
+fi
+
+if $SYCL_OK; then
+    run_benchmark "SYCL" "$SCRIPT_DIR/sycl/build/rambo_sycl" "$NUM_RUNS"
 fi
 
 echo -e "${CYAN}========================================${NC}"
@@ -236,6 +278,10 @@ fi
 
 if $CUDA_OK && [ "$CUDA_avg" -gt 0 ]; then
     printf "%-12s %15.2e %15.2e %15.2e\n" "CUDA" $CUDA_avg $CUDA_min $CUDA_max
+fi
+
+if $SYCL_OK && [ "$SYCL_avg" -gt 0 ]; then
+    printf "%-12s %15.2e %15.2e %15.2e\n" "SYCL" $SYCL_avg $SYCL_min $SYCL_max
 fi
 
 echo ""
@@ -264,6 +310,11 @@ if [ "$CUDA_avg" -gt "$max_avg" ]; then
     winner="CUDA"
 fi
 
+if [ "$SYCL_avg" -gt "$max_avg" ]; then
+    max_avg=$SYCL_avg
+    winner="SYCL"
+fi
+
 echo -e "${GREEN}Fastest backend: ${winner} ($(printf "%.2e" $max_avg) events/sec)${NC}"
 echo ""
 
@@ -285,6 +336,10 @@ if [ "$max_avg" -gt 0 ]; then
     if $CUDA_OK && [ "$CUDA_avg" -gt 0 ]; then
         rel=$(echo "scale=1; $CUDA_avg * 100 / $max_avg" | bc)
         printf "  CUDA:   %5.1f%%\n" $rel
+    fi
+    if $SYCL_OK && [ "$SYCL_avg" -gt 0 ]; then
+        rel=$(echo "scale=1; $SYCL_avg * 100 / $max_avg" | bc)
+        printf "  SYCL:   %5.1f%%\n" $rel
     fi
 fi
 
