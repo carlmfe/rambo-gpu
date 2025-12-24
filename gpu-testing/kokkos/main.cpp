@@ -14,8 +14,7 @@
 
 #include <Kokkos_Core.hpp>
 
-#include "integrator.hpp"
-#include "integrands.hpp"
+#include <rambo/rambo.hpp>
 
 // =============================================================================
 // Benchmark helper
@@ -37,7 +36,7 @@ void runBenchmark(const std::string& backendName,
     
     // Warmup run (smaller)
     {
-        RamboIntegrator<Integrand, nParticles> warmup(
+        rambo::RamboIntegrator<Integrand, nParticles> warmup(
             std::min(nEvents / 10, int64_t(10000)), integrand);
         warmup.run(cmEnergy, masses, mean, error, seed);
     }
@@ -45,7 +44,7 @@ void runBenchmark(const std::string& backendName,
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
     
-    RamboIntegrator<Integrand, nParticles> integrator(nEvents, integrand);
+    rambo::RamboIntegrator<Integrand, nParticles> integrator(nEvents, integrand);
     integrator.run(cmEnergy, masses, mean, error, seed);
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -77,6 +76,8 @@ int main(int argc, char* argv[]) {
         std::cout << "======================================" << std::endl;
         std::cout << "RAMBO Monte Carlo Integrator (Kokkos)" << std::endl;
         std::cout << "======================================" << std::endl;
+        std::cout << "Library version: " << rambo::VERSION_MAJOR << "." 
+                  << rambo::VERSION_MINOR << "." << rambo::VERSION_PATCH << std::endl;
         std::cout << "Compiled backend: " << backendName << std::endl;
         std::cout << "Number of events: " << nEvents << std::endl;
         std::cout << "Random seed: " << seed << std::endl;
@@ -91,7 +92,7 @@ int main(int argc, char* argv[]) {
         // Create Drell-Yan integrand (up-quark charge = 2/3)
         const double quarkCharge = 2.0 / 3.0;
         const double alphaEM = 1.0 / 137.035999;
-        DrellYanIntegrand integrand(quarkCharge, alphaEM);
+        rambo::DrellYanIntegrand integrand(quarkCharge, alphaEM);
         
         std::cout << "----------------------------------------" << std::endl;
         std::cout << "Drell-Yan Process: q qbar -> gamma* -> e+ e-" << std::endl;
@@ -101,7 +102,7 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
         
         // Run benchmark
-        runBenchmark<DrellYanIntegrand, nParticles>(
+        runBenchmark<rambo::DrellYanIntegrand, nParticles>(
             backendName, nEvents, cmEnergy, masses, integrand, seed);
         
         // Analytic verification
@@ -109,7 +110,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Analytic Verification" << std::endl;
         std::cout << "========================================" << std::endl;
         double s = cmEnergy * cmEnergy;
-        double analyticSigma = DrellYanIntegrand::analyticCrossSection(s, quarkCharge, alphaEM);
+        double analyticSigma = rambo::DrellYanIntegrand::analyticCrossSection(s, quarkCharge, alphaEM);
         std::cout << std::scientific;
         std::cout << "Analytic cross-section:" << std::endl;
         std::cout << "  sigma = 4*pi*alpha^2*e_q^2 / (3*s) * hbarc^2" << std::endl;

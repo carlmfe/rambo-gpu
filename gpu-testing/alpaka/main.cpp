@@ -1,8 +1,8 @@
 // RAMBO Monte Carlo Integrator using Alpaka 2.0.0
-// This implementation is agnostic to the integrand kernel and supports multiple backends
+// Example application demonstrating the rambo::alpaka library
 //
 // Build with different backends:
-//   cmake -DALPAKA_BACKEND=CUDA ..   # NVIDIA GPU (default)
+//   cmake -DALPAKA_BACKEND=CUDA ..   # NVIDIA GPU
 //   cmake -DALPAKA_BACKEND=CPU ..    # CPU serial
 //   cmake -DALPAKA_BACKEND=OMP ..    # OpenMP parallel
 
@@ -12,10 +12,7 @@
 #include <chrono>
 #include <string>
 
-#include <alpaka/alpaka.hpp>
-
-#include "integrator.hpp"
-#include "integrands.hpp"
+#include <rambo/rambo.hpp>
 
 // =============================================================================
 // Backend Selection (compile-time)
@@ -36,7 +33,6 @@
     using DefaultAccTag = alpaka::TagCpuSerial;
     constexpr const char* BACKEND_NAME = "CPU Serial";
 #else
-    // Fallback: use first available tag
     using DefaultAccTag = std::tuple_element_t<0, alpaka::EnabledAccTags>;
     constexpr const char* BACKEND_NAME = "Auto-detected";
 #endif
@@ -44,7 +40,7 @@
 // =============================================================================
 // Benchmark helper
 // =============================================================================
-template <typename AccTag, IntegrandConcept Integrand, int nParticles>
+template <typename AccTag, rambo::IntegrandConcept Integrand, int nParticles>
 void runBenchmark(const std::string& backendName, 
                   int64_t nEvents, 
                   double cmEnergy, 
@@ -61,7 +57,7 @@ void runBenchmark(const std::string& backendName,
     
     // Warmup run (smaller)
     {
-        RamboIntegrator<AccTag, Integrand, nParticles> warmup(
+        rambo::RamboIntegrator<AccTag, Integrand, nParticles> warmup(
             std::min(nEvents / 10, int64_t(10000)), integrand);
         warmup.run(cmEnergy, masses, mean, error, seed);
     }
@@ -69,7 +65,7 @@ void runBenchmark(const std::string& backendName,
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
     
-    RamboIntegrator<AccTag, Integrand, nParticles> integrator(nEvents, integrand);
+    rambo::RamboIntegrator<AccTag, Integrand, nParticles> integrator(nEvents, integrand);
     integrator.run(cmEnergy, masses, mean, error, seed);
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -115,7 +111,7 @@ int main(int argc, char* argv[]) {
     // Create Drell-Yan integrand (up-quark charge = 2/3)
     const double quarkCharge = 2.0 / 3.0;
     const double alphaEM = 1.0 / 137.035999;
-    DrellYanIntegrand integrand(quarkCharge, alphaEM);
+    rambo::DrellYanIntegrand integrand(quarkCharge, alphaEM);
     
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "Drell-Yan Process: q qbar -> gamma* -> e+ e-" << std::endl;
@@ -125,7 +121,7 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
     
     // Run benchmark with compiled backend
-    runBenchmark<DefaultAccTag, DrellYanIntegrand, nParticles>(
+    runBenchmark<DefaultAccTag, rambo::DrellYanIntegrand, nParticles>(
         BACKEND_NAME, nEvents, cmEnergy, masses, integrand, seed);
     
     // Analytic verification
@@ -133,7 +129,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Analytic Verification" << std::endl;
     std::cout << "========================================" << std::endl;
     double s = cmEnergy * cmEnergy;
-    double analyticSigma = DrellYanIntegrand::analyticCrossSection(s, quarkCharge, alphaEM);
+    double analyticSigma = rambo::DrellYanIntegrand::analyticCrossSection(s, quarkCharge, alphaEM);
     std::cout << std::scientific;
     std::cout << "Analytic cross-section:" << std::endl;
     std::cout << "  sigma = 4*pi*alpha^2*e_q^2 / (3*s) * hbarc^2" << std::endl;
