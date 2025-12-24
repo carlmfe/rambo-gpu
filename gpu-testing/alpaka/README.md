@@ -38,15 +38,19 @@ int main() {
 
 ## Custom Integrands
 
-Use `ALPAKA_FN_HOST_ACC` decorator for portable host/device code:
+Store all physics parameters in the struct. Use `ALPAKA_FN_HOST_ACC` decorator:
 
 ```cpp
-struct MyIntegrand {
-    double scale;
-    ALPAKA_FN_HOST_ACC MyIntegrand(double s = 1.0) : scale(s) {}
+struct MyDrellYan {
+    double quarkCharge;   // e.g., 2/3 for up-type
+    double alphaEM;       // Fine-structure constant
+    
+    ALPAKA_FN_HOST_ACC MyDrellYan(double eq, double alpha) 
+        : quarkCharge(eq), alphaEM(alpha) {}
     
     ALPAKA_FN_HOST_ACC auto evaluate(const double momenta[][4]) const -> double {
-        return myMatrixElement(momenta[0], momenta[1]) * scale;
+        // Compute full differential cross-section from momenta and parameters
+        return dsigma;  // No library scaling applied
     }
 };
 ```

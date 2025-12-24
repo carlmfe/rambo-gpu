@@ -51,34 +51,6 @@ struct ConstantIntegrand {
 };
 
 // =============================================================================
-// MandelstamSIntegrand
-// =============================================================================
-
-template <int nParticles>
-struct MandelstamSIntegrand {
-    double scale;
-    
-    __host__ __device__ MandelstamSIntegrand(double s = 1.0) : scale(s) {}
-    
-    __device__ auto evaluate(const double momenta[][4]) const -> double {
-        double totalMom[4] = {0.0, 0.0, 0.0, 0.0};
-        
-        for (int i = 0; i < nParticles; ++i) {
-            for (int mu = 0; mu < 4; ++mu) {
-                totalMom[mu] += momenta[i][mu];
-            }
-        }
-        
-        double sInvariant = totalMom[0]*totalMom[0] 
-                          - totalMom[1]*totalMom[1] 
-                          - totalMom[2]*totalMom[2] 
-                          - totalMom[3]*totalMom[3];
-        
-        return sInvariant / (scale * scale);
-    }
-};
-
-// =============================================================================
 // DrellYanIntegrand
 // =============================================================================
 

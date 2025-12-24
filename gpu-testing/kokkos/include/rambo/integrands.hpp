@@ -63,35 +63,6 @@ struct ConstantIntegrand {
 };
 
 // -----------------------------------------------------------------------------
-// MandelstamSIntegrand: Total invariant mass squared
-// -----------------------------------------------------------------------------
-// Computes s = (Σp_i)^2 for N particles, normalized by a scale
-template <int nParticles>
-struct MandelstamSIntegrand {
-    double scale;
-    
-    KOKKOS_FUNCTION MandelstamSIntegrand(double s = 1.0) : scale(s) {}
-    
-    KOKKOS_INLINE_FUNCTION auto evaluate(const double momenta[][4]) const -> double {
-        double totalMom[4] = {0.0, 0.0, 0.0, 0.0};
-        
-        for (int i = 0; i < nParticles; ++i) {
-            for (int mu = 0; mu < 4; ++mu) {
-                totalMom[mu] += momenta[i][mu];
-            }
-        }
-        
-        // s = E² - px² - py² - pz²
-        double sInvariant = totalMom[0]*totalMom[0] 
-                          - totalMom[1]*totalMom[1] 
-                          - totalMom[2]*totalMom[2] 
-                          - totalMom[3]*totalMom[3];
-        
-        return sInvariant / (scale * scale);
-    }
-};
-
-// -----------------------------------------------------------------------------
 // DrellYanIntegrand: Parton-level Drell-Yan cross-section (q qbar -> e+ e-)
 // -----------------------------------------------------------------------------
 // Computes the differential cross-section for quark-antiquark annihilation
@@ -168,9 +139,6 @@ struct DrellYanIntegrand {
 // Backwards compatibility aliases
 // =============================================================================
 using Eggholder_3particles = EggholderIntegrand;
-
-template <int NP>
-using MandelstamS_Integrand = MandelstamSIntegrand<NP>;
 
 } // namespace rambo
 

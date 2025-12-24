@@ -35,15 +35,19 @@ int main() {
 
 ## Custom Integrands
 
-Use `__host__ __device__` / `__device__` decorators for GPU compatibility:
+Store all physics parameters in the struct. Use CUDA decorators:
 
 ```cpp
-struct MyIntegrand {
-    double scale;
-    __host__ __device__ MyIntegrand(double s = 1.0) : scale(s) {}
+struct MyDrellYan {
+    double quarkCharge;   // e.g., 2/3 for up-type
+    double alphaEM;       // Fine-structure constant
+    
+    __host__ __device__ MyDrellYan(double eq, double alpha) 
+        : quarkCharge(eq), alphaEM(alpha) {}
     
     __device__ auto evaluate(const double momenta[][4]) const -> double {
-        return myMatrixElement(momenta[0], momenta[1]) * scale;
+        // Compute full differential cross-section from momenta and parameters
+        return dsigma;  // No library scaling applied
     }
 };
 ```

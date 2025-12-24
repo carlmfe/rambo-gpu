@@ -43,23 +43,32 @@ make install
 
 ## Custom Integrands
 
-Wrap any physics function by creating a struct with an `evaluate()` method:
+The integrand struct is your physics payload. Store all parameters needed for evaluation (coupling constants, masses, charges, etc.) — the library passes these to GPU threads automatically.
 
 ```cpp
-struct MyIntegrand {
-    double scale;
+// Example: Drell-Yan cross-section (q qbar -> l+ l-)
+struct DrellYanIntegrand {
+    double quarkCharge;   // e.g., 2/3 for up-type quarks
+    double alphaEM;       // Fine-structure constant (~1/137)
     
-    MyIntegrand(double s = 1.0) : scale(s) {}
+    DrellYanIntegrand(double eq, double alpha) 
+        : quarkCharge(eq), alphaEM(alpha) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
         // momenta[i][mu]: i = particle index, mu = 0:E, 1:px, 2:py, 3:pz
-        // Metric signature: (+,−,−,−)
-        return myMatrixElement(momenta[0], momenta[1]) * scale;
+        // Compute Mandelstam variables, matrix element, phase space factors
+        // Return the FULL differential cross-section (no library scaling)
+        return dsigma;
     }
 };
+
+// Usage: all physics parameters provided at construction
+DrellYanIntegrand integrand(2.0/3.0, 1.0/137.0);
 ```
 
-**GPU backends require device-callable decorators** - see individual README files for syntax:
+**Memory note:** Typical physics parameters (5-10 doubles, ~80 bytes) are negligible. For large lookup tables (PDFs, form factors), store a device pointer in the struct.
+
+**GPU backends require device-callable decorators** — see individual README files:
 - **Kokkos**: `KOKKOS_FUNCTION`, `KOKKOS_INLINE_FUNCTION`
 - **CUDA**: `__host__ __device__`, `__device__`
 - **Alpaka**: `ALPAKA_FN_HOST_ACC`

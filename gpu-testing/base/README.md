@@ -34,15 +34,18 @@ int main() {
 
 ## Custom Integrands
 
-No special decorators required for CPU-only code:
+Store all physics parameters (couplings, masses, charges) in the struct:
 
 ```cpp
-struct MyIntegrand {
-    double scale;
-    MyIntegrand(double s = 1.0) : scale(s) {}
+struct MyDrellYan {
+    double quarkCharge;   // e.g., 2/3 for up-type
+    double alphaEM;       // Fine-structure constant
+    
+    MyDrellYan(double eq, double alpha) : quarkCharge(eq), alphaEM(alpha) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
-        return myMatrixElement(momenta[0], momenta[1]) * scale;
+        // Compute full differential cross-section from momenta and parameters
+        return dsigma;  // No library scaling applied
     }
 };
 ```

@@ -38,16 +38,19 @@ int main() {
 
 ## Custom Integrands
 
-Use `sycl::` math functions for device-compatible code:
+Store all physics parameters in the struct. Use `sycl::` math functions:
 
 ```cpp
-struct MyIntegrand {
-    double scale;
-    MyIntegrand(double s = 1.0) : scale(s) {}
+struct MyDrellYan {
+    double quarkCharge;   // e.g., 2/3 for up-type
+    double alphaEM;       // Fine-structure constant
+    
+    MyDrellYan(double eq, double alpha) : quarkCharge(eq), alphaEM(alpha) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
+        // Compute full differential cross-section from momenta and parameters
         // Use sycl::sqrt, sycl::exp, etc. instead of std:: versions
-        return myMatrixElement(momenta[0], momenta[1]) * scale;
+        return dsigma;  // No library scaling applied
     }
 };
 ```
