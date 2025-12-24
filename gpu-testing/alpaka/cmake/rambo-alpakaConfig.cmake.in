@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(alpaka)
+
+include("${CMAKE_CURRENT_LIST_DIR}/rambo-alpaka-targets.cmake")
+
+check_required_components(rambo-alpaka)

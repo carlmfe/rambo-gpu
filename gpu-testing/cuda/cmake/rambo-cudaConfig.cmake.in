@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# CUDA is required
+enable_language(CUDA)
+
+include("${CMAKE_CURRENT_LIST_DIR}/rambo-cuda-targets.cmake")
+
+check_required_components(rambo-cuda)
