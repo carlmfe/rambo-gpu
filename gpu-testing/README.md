@@ -6,64 +6,64 @@ Monte Carlo phase space integration using the RAMBO algorithm, implemented acros
 
 ```
 gpu-testing/
-├── base/                 # Serial CPU reference implementation (C++17)
-│   ├── rambo_base.hpp    # Phase space generator
-│   ├── integrands.hpp    # Integrand definitions
-│   ├── integrator.hpp    # Monte Carlo integrator
-│   └── main.cpp          # Entry point
-│
-├── kokkos/               # Kokkos implementation (CUDA/OpenMP)
-│   ├── rambo_kokkos.hpp
-│   ├── integrands.hpp
-│   ├── integrator.hpp
-│   └── main.cpp
-│
-├── alpaka/               # Alpaka 2.0.0 implementation (CUDA/CPU/OpenMP)
-│   ├── rambo_alpaka.hpp
-│   ├── integrands.hpp
-│   ├── integrator.hpp
-│   └── main.cpp
-│
-├── cuda/                 # Pure CUDA implementation
-│   ├── rambo_cuda.cuh
-│   ├── integrands.cuh
-│   ├── integrator.cuh
-│   └── main.cu
-│
-├── sycl/                 # SYCL implementation (CUDA backend)
-│   ├── rambo_sycl.hpp
-│   ├── integrands.hpp
-│   ├── integrator.hpp
-│   └── main.cpp
-│
+├── base/                 # Serial CPU reference (C++17, no dependencies)
+├── kokkos/               # Kokkos (CUDA/OpenMP/Serial)
+├── alpaka/               # Alpaka 2.0.0 (CUDA/HIP/CPU/OpenMP)
+├── cuda/                 # Pure CUDA
+├── sycl/                 # SYCL (CUDA/HIP/Intel)
 ├── benchmark.sh          # Performance comparison script
 └── check_gpu.sh          # GPU utilization verification
 ```
 
-## The Eggholder Integrand
+Each implementation is a header-only library with:
+- `include/rambo/rambo.hpp` - Main include file
+- `include/rambo/phase_space.hpp` - PhaseSpaceGenerator, RamboAlgorithm
+- `include/rambo/integrator.hpp` - RamboIntegrator class
+- `include/rambo/integrands.hpp` - Example integrands (DrellYan, Eggholder, etc.)
 
-The Eggholder integrand is a physics-inspired test function computed from Lorentz-invariant quantities. For a 3-particle final state with 4-momenta $p_1$, $p_2$, $p_3$:
+## Installation
 
-### Mandelstam-like Invariants
+All implementations follow the same pattern:
 
-$$s_{ij} = (p_i - p_j)^2 = (E_i - E_j)^2 - |\vec{p}_i - \vec{p}_j|^2$$
+```bash
+mkdir build && cd build
+cmake [OPTIONS] -DCMAKE_INSTALL_PREFIX=/path/to/install ..
+make install
+```
 
-Using the Minkowski metric signature $(+,-,-,-)$:
+**Implementation-specific options:**
 
-$$s_{12} = (p_1 - p_2)^\mu (p_1 - p_2)_\mu$$
-$$s_{13} = (p_1 - p_3)^\mu (p_1 - p_3)_\mu$$
-$$s_{23} = (p_2 - p_3)^\mu (p_2 - p_3)_\mu$$
+| Implementation | CMake Options |
+|----------------|---------------|
+| base | (none required) |
+| kokkos | `-DKokkos_ROOT=/path/to/kokkos` |
+| cuda | (auto-detects CUDA) |
+| alpaka | `-Dalpaka_ROOT=/path/to/alpaka -DALPAKA_BACKEND=CUDA` |
+| sycl | `-DCMAKE_CXX_COMPILER=clang++ -DCUDA_GPU_ARCH=sm_XX` |
 
-### Integrand Function
+## Custom Integrands
 
-$$f(p_1, p_2, p_3) = \sin\left(\sqrt{\frac{|s_{12} - s_{23}|}{\lambda^2}}\right) \cdot \cos\left(\sqrt{\frac{|s_{13}|}{\lambda^2}}\right)$$
+Wrap any physics function by creating a struct with an `evaluate()` method:
 
-where $\lambda^2$ is a scale parameter (default: $1000^2 = 10^6$).
+```cpp
+struct MyIntegrand {
+    double scale;
+    
+    MyIntegrand(double s = 1.0) : scale(s) {}
+    
+    auto evaluate(const double momenta[][4]) const -> double {
+        // momenta[i][mu]: i = particle index, mu = 0:E, 1:px, 2:py, 3:pz
+        // Metric signature: (+,−,−,−)
+        return myMatrixElement(momenta[0], momenta[1]) * scale;
+    }
+};
+```
 
-This integrand:
-- Is Lorentz-invariant (depends only on invariant masses)
-- Has oscillatory behavior testing numerical precision
-- Produces non-trivial values across phase space
+**GPU backends require device-callable decorators** - see individual README files for syntax:
+- **Kokkos**: `KOKKOS_FUNCTION`, `KOKKOS_INLINE_FUNCTION`
+- **CUDA**: `__host__ __device__`, `__device__`
+- **Alpaka**: `ALPAKA_FN_HOST_ACC`
+- **SYCL**: Use `sycl::` math functions
 
 ## Shell Scripts
 
@@ -107,57 +107,25 @@ Verifies that a program actually uses the GPU during execution.
 
 ## Quick Start
 
-### Prerequisites
-
-- CMake 3.18+
-- C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
-- For GPU implementations: CUDA Toolkit, Kokkos, Alpaka, and/or SYCL compiler
-
-### Building Individual Projects
-
 ```bash
-# Base (always works - no external dependencies)
-cd base && mkdir build && cd build && cmake .. && make -j4
+# Base (no dependencies)
+cd base && mkdir build && cd build && cmake .. && make
 
-# CUDA (auto-detects nvcc in PATH)
-cd cuda && mkdir build && cd build && cmake .. && make -j4
-
-# Kokkos (specify installation path)
+# Kokkos
 cd kokkos && mkdir build && cd build
-cmake -DKokkos_ROOT=/path/to/kokkos .. && make -j4
+cmake -DKokkos_ROOT=/path/to/kokkos .. && make
 
-# Alpaka (specify installation path and backend)
+# CUDA
+cd cuda && mkdir build && cd build && cmake .. && make
+
+# Alpaka
 cd alpaka && mkdir build && cd build
-cmake -Dalpaka_ROOT=/path/to/alpaka -DALPAKA_BACKEND=CUDA .. && make -j4
+cmake -Dalpaka_ROOT=/path/to/alpaka -DALPAKA_BACKEND=CUDA .. && make
 
-# SYCL (requires SYCL-enabled clang++)
+# SYCL
 cd sycl && mkdir build && cd build
-cmake -DCMAKE_CXX_COMPILER=/path/to/sycl/clang++ .. && make -j4
+cmake -DCMAKE_CXX_COMPILER=clang++ -DCUDA_GPU_ARCH=sm_89 .. && make
 ```
-
-### Using the Benchmark Script
-
-```bash
-# Set environment variables for library paths
-export KOKKOS_ROOT=/path/to/kokkos
-export ALPAKA_ROOT=/path/to/alpaka
-export SYCL_CXX=/path/to/sycl/clang++
-
-# Run benchmark (builds all available implementations)
-./benchmark.sh 10000000    # 10M events
-./benchmark.sh 10000000 42 5  # 10M events, seed 42, 5 runs
-```
-
-### macOS Support
-
-The base implementation works on macOS with any C++20 compiler:
-
-```bash
-cd base && mkdir build && cd build
-cmake .. && make -j4
-```
-
-GPU implementations (CUDA, SYCL with CUDA backend) require Linux with NVIDIA drivers.
 
 ## Performance Reference
 

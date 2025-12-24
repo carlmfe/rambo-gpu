@@ -7,14 +7,6 @@ Header-only, serial CPU reference implementation. No external dependencies.
 - **CMake** ≥ 3.18
 - **C++17** compiler (GCC ≥9, Clang ≥10, MSVC 2019+)
 
-## Installation
-
-```bash
-mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=/path/to/install ..
-make install
-```
-
 ## Usage
 
 ### CMake
@@ -42,21 +34,15 @@ int main() {
 
 ## Custom Integrands
 
-Wrap any function by creating a struct with an `evaluate()` method:
+No special decorators required for CPU-only code:
 
 ```cpp
 struct MyIntegrand {
     double scale;
-    
     MyIntegrand(double s = 1.0) : scale(s) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
-        // momenta[i][mu]: i = particle index, mu = 0:E, 1:px, 2:py, 3:pz
         return myMatrixElement(momenta[0], momenta[1]) * scale;
     }
 };
-
-// Use it:
-MyIntegrand integrand(1.0);
-rambo::RamboIntegrator<MyIntegrand, 2> integrator(nEvents, integrand);
 ```

@@ -9,15 +9,6 @@ Supports CUDA, HIP, SYCL, CPU Serial, and OpenMP backends.
 - **C++20** compiler (GCC ≥10, Clang ≥12, NVCC ≥11)
 - **Alpaka** ≥ 2.0.0, pre-built with desired backend
 
-## Installation
-
-```bash
-mkdir build && cd build
-cmake -Dalpaka_ROOT=/path/to/alpaka -DALPAKA_BACKEND=CUDA \
-      -DCMAKE_INSTALL_PREFIX=/path/to/install ..
-make install
-```
-
 ## Usage
 
 ### CMake
@@ -47,30 +38,15 @@ int main() {
 
 ## Custom Integrands
 
-Wrap any function by creating a struct with an `evaluate()` method:
+Use `ALPAKA_FN_HOST_ACC` decorator for portable host/device code:
 
 ```cpp
 struct MyIntegrand {
     double scale;
-    
     ALPAKA_FN_HOST_ACC MyIntegrand(double s = 1.0) : scale(s) {}
     
     ALPAKA_FN_HOST_ACC auto evaluate(const double momenta[][4]) const -> double {
-        // momenta[i][mu]: i = particle index, mu = 0:E, 1:px, 2:py, 3:pz
         return myMatrixElement(momenta[0], momenta[1]) * scale;
     }
 };
-
-// Use it:
-MyIntegrand integrand(1.0);
-rambo::RamboIntegrator<AccTag, MyIntegrand, 2> integrator(nEvents, integrand);
 ```
-
-## Backend Selection
-
-| Backend | CMake Flag | AccTag |
-|---------|------------|--------|
-| CUDA | `-DALPAKA_BACKEND=CUDA` | `alpaka::TagGpuCudaRt` |
-| HIP | `-DALPAKA_BACKEND=HIP` | `alpaka::TagGpuHipRt` |
-| CPU Serial | `-DALPAKA_BACKEND=CPU` | `alpaka::TagCpuSerial` |
-| OpenMP | `-DALPAKA_BACKEND=OMP` | `alpaka::TagCpuOmp2Blocks` |
