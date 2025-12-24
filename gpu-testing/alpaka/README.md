@@ -1,110 +1,72 @@
-# RAMBO Monte Carlo Integrator - Alpaka
+# RAMBO Alpaka Implementation
 
-High-performance **multi-vendor GPU** implementation using the Alpaka 2.0.0 portability library.
+Header-only Alpaka library for RAMBO phase space generation and Monte Carlo integration.
+Supports multiple backends: CUDA, HIP, SYCL, CPU Serial, OpenMP.
 
-## Overview
+## Quick Start
 
-Alpaka provides a single-source programming model that can target NVIDIA, AMD, and Intel GPUs, as well as CPUs. The backend is selected at compile time via CMake flags.
+```bash
+module load alpaka/2.0.0_cuda  # Or your alpaka installation
+mkdir build && cd build
+cmake -DALPAKA_BACKEND=CUDA ..
+make
+./rambo_alpaka 1000000 5489
+```
 
-## Supported Backends
+## Library Usage
 
-| Backend | Vendor | CMake Flag | Auto-Detection |
-|---------|--------|------------|----------------|
-| **CUDA** | NVIDIA | `-DALPAKA_BACKEND=CUDA` | ✅ via `native` |
-| **HIP** | AMD | `-DALPAKA_BACKEND=HIP` | ✅ via rocminfo |
-| **SYCL** | Intel | `-DALPAKA_BACKEND=SYCL` | ✅ automatic |
-| **CPU** | Any | `-DALPAKA_BACKEND=CPU` | N/A |
-| **OMP** | Any | `-DALPAKA_BACKEND=OMP` | N/A |
+```cmake
+find_package(rambo-alpaka REQUIRED)
+target_link_libraries(my_app PRIVATE rambo::alpaka)
+```
+
+```cpp
+#include <rambo/rambo.hpp>
+
+using AccTag = alpaka::TagGpuCudaRt;  // Or other backend
+
+rambo::DrellYanIntegrand integrand(2.0/3.0, 1.0/137.0);
+rambo::RamboIntegrator<AccTag, rambo::DrellYanIntegrand, 2> integrator(1000000, integrand);
+
+double masses[2] = {0.000511, 0.000511};
+double mean, error;
+integrator.run(91.2, masses, mean, error, 5489);
+```
+
+## Custom Integrands
+
+```cpp
+struct MyIntegrand {
+    double scale;
+    ALPAKA_FN_HOST_ACC MyIntegrand(double s = 1.0) : scale(s) {}
+    
+    ALPAKA_FN_HOST_ACC auto evaluate(const double momenta[][4]) const -> double {
+        return myCalculation(momenta) * scale;
+    }
+};
+```
+
+## Backend Selection
+
+| Backend | CMake Flag | AccTag |
+|---------|-----------|--------|
+| CUDA | `-DALPAKA_BACKEND=CUDA` | `alpaka::TagGpuCudaRt` |
+| HIP | `-DALPAKA_BACKEND=HIP` | `alpaka::TagGpuHipRt` |
+| CPU Serial | `-DALPAKA_BACKEND=CPU` | `alpaka::TagCpuSerial` |
+| OpenMP | `-DALPAKA_BACKEND=OMP` | `alpaka::TagCpuOmp2Blocks` |
 
 ## Requirements
 
+- Alpaka 2.0.0+
 - CMake ≥ 3.18
-- C++20 compatible compiler
-- Alpaka 2.0.0+ library (built with your desired backend)
-- Backend-specific:
-  - **CUDA**: CUDA Toolkit 11.0+
-  - **HIP**: ROCm 5.0+
-  - **SYCL**: Intel oneAPI or AdaptiveCpp
+- C++20 compiler
 
-## Build Instructions
+## Files
 
-### NVIDIA GPUs (CUDA)
-```bash
-mkdir build && cd build
-
-# Auto-detect GPU architecture
-cmake -DALPAKA_BACKEND=CUDA -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
 ```
-
-### AMD GPUs (HIP)
-```bash
-# Auto-detect GPU architecture
-cmake -DALPAKA_BACKEND=HIP -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
-
-# Or specify architecture manually
-cmake -DALPAKA_BACKEND=HIP -DHIP_GPU_ARCH=gfx1100 -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
+include/rambo/
+├── rambo.hpp         # Main include
+├── phase_space.hpp   # PhaseSpaceGenerator, RamboAlgorithm
+├── integrator.hpp    # RamboIntegrator
+└── integrands.hpp    # Example integrands
 ```
-
-### Intel GPUs (SYCL)
-```bash
-cmake -DALPAKA_BACKEND=SYCL -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
-```
-
-### CPU Serial (default)
-```bash
-cmake -DALPAKA_BACKEND=CPU -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
-```
-
-### OpenMP (multi-threaded CPU)
-```bash
-cmake -DALPAKA_BACKEND=OMP -Dalpaka_ROOT=/path/to/alpaka ..
-make -j4
-```
-
-## Run
-
-```bash
-./rambo_alpaka [num_events] [seed]
-
-# Examples:
-./rambo_alpaka                  # Default: 100k events, seed 5489
-./rambo_alpaka 10000000         # 10M events
-./rambo_alpaka 10000000 42      # 10M events with custom seed
-```
-
-## GPU Architecture Reference
-
-### NVIDIA (CUDA)
-Architecture is auto-detected via CMake's `native` setting.
-
-### AMD (HIP)
-| Architecture | GPUs |
-|--------------|------|
-| gfx906 | MI50, Radeon VII |
-| gfx908 | MI100 |
-| gfx90a | MI210, MI250 |
-| gfx1030 | RX 6800, 6900 |
-| gfx1100 | RX 7900 |
-
-## Backend Selection Summary
-
-| Backend | CMake Flag | Description |
-|---------|------------|-------------|
-| CUDA | `-DALPAKA_BACKEND=CUDA` | NVIDIA GPU |
-| HIP | `-DALPAKA_BACKEND=HIP` | AMD GPU |
-| SYCL | `-DALPAKA_BACKEND=SYCL` | Intel GPU (or portable) |
-| CPU Serial | `-DALPAKA_BACKEND=CPU` | Single-threaded CPU |
-| OpenMP | `-DALPAKA_BACKEND=OMP` | Multi-threaded CPU |
-
-## Important Notes
-
-1. **Alpaka must be built with the corresponding backend enabled**. If you want to use HIP, your Alpaka installation must have been configured with `-Dalpaka_ACC_GPU_HIP_ENABLE=ON`.
-
-2. The backend is selected at **compile time**, not runtime. To switch backends, you need to reconfigure and rebuild.
-
-3. For best performance, ensure your Alpaka installation matches your target hardware.

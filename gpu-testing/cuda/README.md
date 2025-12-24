@@ -1,68 +1,60 @@
-# RAMBO Monte Carlo Integrator - CUDA
+# RAMBO CUDA Implementation
 
-GPU-accelerated implementation using pure CUDA.
+Header-only CUDA library for RAMBO phase space generation and Monte Carlo integration.
 
-## Requirements
-
-- CMake ≥ 3.18
-- CUDA Toolkit 11.0+ (tested with CUDA 13.0)
-- NVIDIA GPU with compute capability 5.0+
-- C++17 compatible host compiler
-
-## Build
+## Quick Start
 
 ```bash
 mkdir build && cd build
 cmake ..
-make -j4
+make
+./rambo_cuda 1000000 5489
 ```
 
-To specify a different GPU architecture:
-```bash
-cmake -DCMAKE_CUDA_ARCHITECTURES=89 ..  # Ada Lovelace (RTX 40xx)
-cmake -DCMAKE_CUDA_ARCHITECTURES=86 ..  # Ampere (RTX 30xx)
-cmake -DCMAKE_CUDA_ARCHITECTURES=75 ..  # Turing (RTX 20xx)
+## Library Usage
+
+```cmake
+find_package(rambo-cuda REQUIRED)
+target_link_libraries(my_app PRIVATE rambo::cuda)
 ```
 
-## Run
+```cpp
+#include <rambo/rambo.cuh>
 
-```bash
-./rambo_cuda [num_events] [seed]
+rambo::DrellYanIntegrand integrand(2.0/3.0, 1.0/137.0);
+rambo::RamboIntegrator<rambo::DrellYanIntegrand, 2> integrator(1000000, integrand);
 
-# Examples:
-./rambo_cuda                  # Default: 100k events, seed 5489
-./rambo_cuda 10000000         # 10M events
-./rambo_cuda 10000000 42      # 10M events with custom seed
+double masses[2] = {0.000511, 0.000511};
+double mean, error;
+integrator.run(91.2, masses, mean, error, 5489);
 ```
 
-## Output
+## Custom Integrands
 
-```
-======================================
-RAMBO Monte Carlo Integrator (CUDA)
-======================================
-Compiled backend: CUDA GPU
-Device: NVIDIA RTX 2000 Ada Generation Laptop GPU
-Number of events: 10000000
-Random seed: 5489
-Center-of-mass energy: 1000 GeV
-Number of particles: 3
-
-----------------------------------------
-Backend: CUDA GPU
-----------------------------------------
-  Mean: -753.552
-  Error: 306.4
-  Time: 70.0 ms
-  Throughput: 1.43e+08 events/sec
-
-======================================
-Benchmark complete.
-======================================
+```cpp
+struct MyIntegrand {
+    double scale;
+    __host__ __device__ MyIntegrand(double s = 1.0) : scale(s) {}
+    
+    __device__ auto evaluate(const double momenta[][4]) const -> double {
+        // momenta[i][mu]: i=particle, mu=0:E,1:px,2:py,3:pz
+        return myCalculation(momenta) * scale;
+    }
+};
 ```
 
-## Notes
+## Requirements
 
-- Uses XorShift64 RNG for fast, reproducible random number generation
-- Grid-stride loop pattern for handling arbitrary event counts
-- Atomic operations for global sum reduction
+- CMake ≥ 3.18
+- CUDA Toolkit
+- C++17 compiler
+
+## Files
+
+```
+include/rambo/
+├── rambo.cuh         # Main include
+├── phase_space.cuh   # PhaseSpaceGenerator, RamboAlgorithm
+├── integrator.cuh    # RamboIntegrator
+└── integrands.cuh    # Example integrands
+```
