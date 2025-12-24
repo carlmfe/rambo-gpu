@@ -1,28 +1,17 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(RamboBase CXX)
+project(RamboBase 
+    VERSION 1.0.0
+    DESCRIPTION "RAMBO Phase Space Generator Library (Serial CPU)"
+    LANGUAGES CXX)
 
 # =============================================================================
 # C++ Standard
 # =============================================================================
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Check for C++20 support
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "10.0")
-        message(FATAL_ERROR "GCC 10.0 or later required for C++20 support. Found: ${CMAKE_CXX_COMPILER_VERSION}")
-    endif()
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "10.0")
-        message(FATAL_ERROR "Clang 10.0 or later required for C++20 support. Found: ${CMAKE_CXX_COMPILER_VERSION}")
-    endif()
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "19.29")
-        message(FATAL_ERROR "MSVC 2019 16.10 or later required for C++20 support. Found: ${CMAKE_CXX_COMPILER_VERSION}")
-    endif()
-endif()
 message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 
 # =============================================================================
@@ -34,37 +23,81 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 # =============================================================================
-# Compiler-specific optimizations
+# Options
 # =============================================================================
-add_executable(rambo_base main.cpp)
+option(RAMBO_BUILD_EXAMPLES "Build example executables" ON)
+option(RAMBO_INSTALL "Generate install target" ON)
 
-# Platform-agnostic optimization flags
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    target_compile_options(rambo_base PRIVATE
-        $<$<CONFIG:Release>:-O3>
-    )
-    # Native architecture optimization (optional, may affect portability)
-    option(ENABLE_NATIVE_ARCH "Enable -march=native for better performance" OFF)
-    if(ENABLE_NATIVE_ARCH)
-        target_compile_options(rambo_base PRIVATE -march=native)
+# =============================================================================
+# Header-only Library Target
+# =============================================================================
+add_library(rambo_base_lib INTERFACE)
+add_library(rambo::base ALIAS rambo_base_lib)
+
+target_include_directories(rambo_base_lib INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_compile_features(rambo_base_lib INTERFACE cxx_std_17)
+
+# =============================================================================
+# Example Executable
+# =============================================================================
+if(RAMBO_BUILD_EXAMPLES)
+    add_executable(rambo_base main.cpp)
+    target_link_libraries(rambo_base PRIVATE rambo_base_lib)
+    
+    # Optimization flags
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(rambo_base PRIVATE $<$<CONFIG:Release>:-O3>)
     endif()
-elseif(MSVC)
-    target_compile_options(rambo_base PRIVATE
-        $<$<CONFIG:Release>:/O2>
+    
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(rambo_base PRIVATE m)
+    endif()
+endif()
+
+# =============================================================================
+# Installation
+# =============================================================================
+if(RAMBO_INSTALL)
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+    
+    install(DIRECTORY include/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.hpp"
+    )
+    
+    install(TARGETS rambo_base_lib
+        EXPORT rambo-base-targets
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+    
+    install(EXPORT rambo-base-targets
+        FILE rambo-base-targets.cmake
+        NAMESPACE rambo::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/rambo-base
+    )
+    
+    configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rambo-baseConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/rambo-baseConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/rambo-base
+    )
+    
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/rambo-baseConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/rambo-baseConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/rambo-baseConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/rambo-base
     )
 endif()
 
-# =============================================================================
-# Platform-specific linking
-# =============================================================================
-if(UNIX AND NOT APPLE)
-    # Linux: link math library explicitly
-    target_link_libraries(rambo_base PRIVATE m)
-endif()
-# macOS and Windows: math functions are in standard library
-
-# =============================================================================
-# Print configuration
-# =============================================================================
-message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
