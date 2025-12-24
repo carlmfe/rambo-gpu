@@ -42,27 +42,21 @@ int main() {
 
 ## Custom Integrands
 
+Wrap any function by creating a struct with an `evaluate()` method:
+
 ```cpp
 struct MyIntegrand {
     double scale;
+    
     MyIntegrand(double s = 1.0) : scale(s) {}
     
     auto evaluate(const double momenta[][4]) const -> double {
-        // momenta[i][mu]: i = particle, mu = 0:E, 1:px, 2:py, 3:pz
-        return myFunction(momenta[0], momenta[1]) * scale;
+        // momenta[i][mu]: i = particle index, mu = 0:E, 1:px, 2:py, 3:pz
+        return myMatrixElement(momenta[0], momenta[1]) * scale;
     }
 };
+
+// Use it:
+MyIntegrand integrand(1.0);
+rambo::RamboIntegrator<MyIntegrand, 2> integrator(nEvents, integrand);
 ```
-
-## Running the Example
-
-```bash
-./rambo_base [num_events] [seed]
-./rambo_base 1000000 5489
-```
-
-## Notes
-
-- Serial execution (single-threaded)
-- Uses XorShift64 RNG
-- 4-momenta use metric signature (+,−,−,−)
