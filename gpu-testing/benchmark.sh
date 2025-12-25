@@ -4,30 +4,56 @@
 # =============================================================================
 # Compares performance of Base, Kokkos, Alpaka, CUDA, and SYCL implementations
 #
-# Usage: ./benchmark.sh [num_events] [seed] [num_runs]
-#        ./benchmark.sh              # Default: 10M events, seed 5489, 3 runs
-#        ./benchmark.sh 100000000    # 100M events
-#        ./benchmark.sh 10000000 42  # Custom seed
-#        ./benchmark.sh 10000000 5489 5  # 5 runs
+# Usage: ./benchmark.sh [options] [num_events] [seed] [num_runs]
+#        ./benchmark.sh                    # Default: 10M events, seed 5489, 3 runs
+#        ./benchmark.sh 100000000          # 100M events
+#        ./benchmark.sh 10000000 42        # Custom seed
+#        ./benchmark.sh 10000000 5489 5    # 5 runs
+#        ./benchmark.sh --skip-build       # Skip build phase, run existing executables
 #
-# Environment Variables (optional):
+# Options:
+#   --skip-build    Skip the build phase, only run benchmarks on existing executables
+#   --help          Show this help message
+#
+# Environment Variables (for build phase):
 #   KOKKOS_ROOT   - Path to Kokkos installation
 #   ALPAKA_ROOT   - Path to Alpaka installation  
 #   SYCL_CXX      - Path to SYCL compiler (clang++)
 #
 # Example:
-#   export KOKKOS_ROOT=/path/to/kokkos
-#   export ALPAKA_ROOT=/path/to/alpaka
-#   ./benchmark.sh
+#   # Build each project manually with correct modules, then benchmark:
+#   ./benchmark.sh --skip-build 10000000 5489 5
 # =============================================================================
 
-set -e
+# Don't exit on individual command failures
+set +e
+
+# Parse options
+SKIP_BUILD=false
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --skip-build)
+            SKIP_BUILD=true
+            shift
+            ;;
+        --help|-h)
+            head -25 "$0" | tail -23
+            exit 0
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NUM_EVENTS=${1:-10000000}
-SEED=${2:-5489}
-NUM_RUNS=${3:-3}
+NUM_EVENTS=${POSITIONAL_ARGS[0]:-10000000}
+SEED=${POSITIONAL_ARGS[1]:-5489}
+NUM_RUNS=${POSITIONAL_ARGS[2]:-3}
 
 # Colors for output
 RED='\033[0;31m'
@@ -164,42 +190,84 @@ ALPAKA_OK=false
 CUDA_OK=false
 SYCL_OK=false
 
-# Base always builds (no dependencies)
-if build_project "Base (Serial)" "$SCRIPT_DIR/base"; then
-    BASE_OK=true
-fi
+if $SKIP_BUILD; then
+    echo -e "${YELLOW}Skipping build phase (--skip-build)${NC}"
+    echo -e "Checking for existing executables..."
+    echo ""
+    
+    # Check for existing executables
+    if [ -x "$SCRIPT_DIR/base/build/rambo_base" ]; then
+        echo -e "${GREEN}✓ Base executable found${NC}"
+        BASE_OK=true
+    else
+        echo -e "${RED}✗ Base executable not found${NC}"
+    fi
+    
+    if [ -x "$SCRIPT_DIR/kokkos/build/rambo_kokkos" ]; then
+        echo -e "${GREEN}✓ Kokkos executable found${NC}"
+        KOKKOS_OK=true
+    else
+        echo -e "${RED}✗ Kokkos executable not found${NC}"
+    fi
+    
+    if [ -x "$SCRIPT_DIR/alpaka/build/rambo_alpaka" ]; then
+        echo -e "${GREEN}✓ Alpaka executable found${NC}"
+        ALPAKA_OK=true
+    else
+        echo -e "${RED}✗ Alpaka executable not found${NC}"
+    fi
+    
+    if [ -x "$SCRIPT_DIR/cuda/build/rambo_cuda" ]; then
+        echo -e "${GREEN}✓ CUDA executable found${NC}"
+        CUDA_OK=true
+    else
+        echo -e "${RED}✗ CUDA executable not found${NC}"
+    fi
+    
+    if [ -x "$SCRIPT_DIR/sycl/build/rambo_sycl" ]; then
+        echo -e "${GREEN}✓ SYCL executable found${NC}"
+        SYCL_OK=true
+    else
+        echo -e "${RED}✗ SYCL executable not found${NC}"
+    fi
+else
+    # Base always builds (no dependencies)
+    if build_project "Base (Serial)" "$SCRIPT_DIR/base"; then
+        BASE_OK=true
+    fi
 
-# Kokkos - use KOKKOS_ROOT if set, otherwise try to find it
-KOKKOS_CMAKE_ARGS=""
-if [ -n "$KOKKOS_ROOT" ]; then
-    KOKKOS_CMAKE_ARGS="-DKokkos_ROOT=$KOKKOS_ROOT"
-fi
-if build_project "Kokkos" "$SCRIPT_DIR/kokkos" "$KOKKOS_CMAKE_ARGS"; then
-    KOKKOS_OK=true
-fi
+    # Kokkos - use KOKKOS_ROOT if set, otherwise try to find it
+    KOKKOS_CMAKE_ARGS=""
+    if [ -n "$KOKKOS_ROOT" ]; then
+        KOKKOS_CMAKE_ARGS="-DKokkos_ROOT=$KOKKOS_ROOT"
+    fi
+    if build_project "Kokkos" "$SCRIPT_DIR/kokkos" "$KOKKOS_CMAKE_ARGS"; then
+        KOKKOS_OK=true
+    fi
 
-# Alpaka - use ALPAKA_ROOT if set (alias alpaka_ROOT for CMake)
-ALPAKA_CMAKE_ARGS="-DALPAKA_BACKEND=CUDA"
-if [ -n "$ALPAKA_ROOT" ]; then
-    ALPAKA_CMAKE_ARGS="$ALPAKA_CMAKE_ARGS -Dalpaka_ROOT=$ALPAKA_ROOT"
-fi
-if build_project "Alpaka (CUDA)" "$SCRIPT_DIR/alpaka" "$ALPAKA_CMAKE_ARGS"; then
-    ALPAKA_OK=true
-fi
+    # Alpaka - use ALPAKA_ROOT if set (alias alpaka_ROOT for CMake)
+    ALPAKA_CMAKE_ARGS="-DALPAKA_BACKEND=CUDA"
+    if [ -n "$ALPAKA_ROOT" ]; then
+        ALPAKA_CMAKE_ARGS="$ALPAKA_CMAKE_ARGS -Dalpaka_ROOT=$ALPAKA_ROOT"
+    fi
+    if build_project "Alpaka (CUDA)" "$SCRIPT_DIR/alpaka" "$ALPAKA_CMAKE_ARGS"; then
+        ALPAKA_OK=true
+    fi
 
-# CUDA - auto-detects nvcc
-if build_project "CUDA" "$SCRIPT_DIR/cuda"; then
-    CUDA_OK=true
-fi
+    # CUDA - auto-detects nvcc
+    if build_project "CUDA" "$SCRIPT_DIR/cuda"; then
+        CUDA_OK=true
+    fi
 
-# SYCL - use SYCL_CXX if set
-SYCL_CMAKE_ARGS=""
-if [ -n "$SYCL_CXX" ]; then
-    SYCL_CMAKE_ARGS="-DCMAKE_CXX_COMPILER=$SYCL_CXX"
-fi
-if build_project "SYCL" "$SCRIPT_DIR/sycl" "$SYCL_CMAKE_ARGS"; then
-    SYCL_OK=true
-fi
+    # SYCL - use SYCL_CXX if set
+    SYCL_CMAKE_ARGS=""
+    if [ -n "$SYCL_CXX" ]; then
+        SYCL_CMAKE_ARGS="-DCMAKE_CXX_COMPILER=$SYCL_CXX"
+    fi
+    if build_project "SYCL" "$SCRIPT_DIR/sycl" "$SYCL_CMAKE_ARGS"; then
+        SYCL_OK=true
+    fi
+fi  # End of build phase
 
 echo ""
 echo -e "${CYAN}========================================${NC}"

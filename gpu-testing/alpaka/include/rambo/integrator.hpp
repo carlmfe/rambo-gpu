@@ -39,7 +39,11 @@ struct IntegrationResult {
 };
 
 // =============================================================================
-// Kernels
+// Optimized Monte Carlo Kernel with Grid-Stride Loop and Atomic Reduction
+// =============================================================================
+// Each thread processes multiple events using a grid-stride loop,
+// accumulates results locally, then uses atomicAdd for final reduction.
+// This eliminates per-event global memory writes and multi-pass reduction.
 // =============================================================================
 
 template <IntegrandConcept Integrand, int NumParticles>
@@ -47,8 +51,8 @@ struct MonteCarloKernel {
     double energy;
     const double* masses;
     Integrand integrand;
-    double* sums;
-    double* sumsSquared;
+    double* globalSum;
+    double* globalSum2;
     uint64_t baseSeed;
     int64_t nEvents;
     
@@ -56,57 +60,49 @@ struct MonteCarloKernel {
         double e, const double* m, const Integrand& integ,
         double* s, double* s2, uint64_t seed, int64_t n)
         : energy(e), masses(m), integrand(integ),
-          sums(s), sumsSquared(s2), baseSeed(seed), nEvents(n) {}
+          globalSum(s), globalSum2(s2), baseSeed(seed), nEvents(n) {}
     
     template <typename TAcc>
     ALPAKA_FN_ACC auto operator()(TAcc const& acc) const -> void {
+        // Get linear thread index and grid size
         auto const globalThreadIdx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc);
         auto const globalThreadExtent = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc);
-        auto const linearIdx = alpaka::mapIdx<1u>(globalThreadIdx, globalThreadExtent)[0];
+        auto const threadIdx = alpaka::mapIdx<1u>(globalThreadIdx, globalThreadExtent)[0];
+        auto const gridSize = alpaka::mapIdx<1u>(globalThreadExtent, globalThreadExtent)[0];
         
-        if (static_cast<int64_t>(linearIdx) >= nEvents) return;
+        // Thread-local accumulators (no global memory traffic until end)
+        double localSum = 0.0;
+        double localSum2 = 0.0;
         
-        auto engine = alpaka::rand::engine::createDefault(
-            acc, 
-            static_cast<uint32_t>(baseSeed + linearIdx),
-            static_cast<uint32_t>((baseSeed + linearIdx) >> 32)
-        );
-        
-        alpaka::rand::RandDefault rand;
-        auto dist = alpaka::rand::distribution::createUniformReal<double>(rand);
-        
-        double momenta[NumParticles][4];
-        PhaseSpaceGenerator<NumParticles> rambo(energy, masses);
-        double logWeight = rambo(engine, dist, momenta);
-        
-        double fx = integrand.evaluate(momenta);
-        double weightedValue = fx * std::exp(logWeight);
-        
-        sums[linearIdx] = weightedValue;
-        sumsSquared[linearIdx] = weightedValue * weightedValue;
-    }
-};
-
-struct ReductionKernel {
-    double* data;
-    int64_t size;
-    int64_t stride;
-    
-    ALPAKA_FN_HOST_ACC ReductionKernel(double* d, int64_t n, int64_t s)
-        : data(d), size(n), stride(s) {}
-    
-    template <typename TAcc>
-    ALPAKA_FN_ACC auto operator()(TAcc const& acc) const -> void {
-        auto const globalThreadIdx = alpaka::getIdx<alpaka::Grid, alpaka::Threads>(acc);
-        auto const globalThreadExtent = alpaka::getWorkDiv<alpaka::Grid, alpaka::Threads>(acc);
-        auto const idx = alpaka::mapIdx<1u>(globalThreadIdx, globalThreadExtent)[0];
-        
-        int64_t i = static_cast<int64_t>(idx) * stride * 2;
-        int64_t j = i + stride;
-        
-        if (j < size) {
-            data[i] += data[j];
+        // Grid-stride loop: each thread processes multiple events
+        for (int64_t idx = static_cast<int64_t>(threadIdx); idx < nEvents; idx += static_cast<int64_t>(gridSize)) {
+            // Create RNG with unique seed per event (not per thread)
+            auto engine = alpaka::rand::engine::createDefault(
+                acc, 
+                static_cast<uint32_t>(baseSeed + static_cast<uint64_t>(idx)),
+                static_cast<uint32_t>((baseSeed + static_cast<uint64_t>(idx)) >> 32)
+            );
+            
+            alpaka::rand::RandDefault rand;
+            auto dist = alpaka::rand::distribution::createUniformReal<double>(rand);
+            
+            // Generate phase space point
+            double momenta[NumParticles][4];
+            PhaseSpaceGenerator<NumParticles> rambo(energy, masses);
+            double logWeight = rambo(engine, dist, momenta);
+            
+            // Evaluate integrand
+            double fx = integrand.evaluate(momenta);
+            double weightedValue = fx * std::exp(logWeight);
+            
+            // Accumulate locally (no global memory write per event)
+            localSum += weightedValue;
+            localSum2 += weightedValue * weightedValue;
         }
+        
+        // Single atomic add per thread (not per event)
+        alpaka::atomicAdd(acc, globalSum, localSum, alpaka::hierarchy::Grids{});
+        alpaka::atomicAdd(acc, globalSum2, localSum2, alpaka::hierarchy::Grids{});
     }
 };
 
@@ -140,16 +136,24 @@ public:
         auto const devHost = alpaka::getDevByIdx(platformHost, 0);
         Queue queue(devAcc);
         
+        // Allocate device memory
         auto deviceMasses = alpaka::allocBuf<double, Idx>(devAcc, static_cast<Idx>(NumParticles));
-        auto deviceSums = alpaka::allocBuf<double, Idx>(devAcc, static_cast<Idx>(nEvents_));
-        auto deviceSums2 = alpaka::allocBuf<double, Idx>(devAcc, static_cast<Idx>(nEvents_));
+        auto deviceSum = alpaka::allocBuf<double, Idx>(devAcc, static_cast<Idx>(1));
+        auto deviceSum2 = alpaka::allocBuf<double, Idx>(devAcc, static_cast<Idx>(1));
         
+        // Initialize sums to zero
+        alpaka::memset(queue, deviceSum, 0);
+        alpaka::memset(queue, deviceSum2, 0);
+        
+        // Copy masses to device
         copyMassesToDevice(devHost, queue, hostMasses, deviceMasses);
-        launchMonteCarloKernel(devAcc, queue, energy, deviceMasses, deviceSums, deviceSums2, seed);
-        performReduction(devAcc, queue, deviceSums, deviceSums2);
         
-        result.sum = copyScalarFromDevice(devHost, queue, deviceSums);
-        result.sumSquared = copyScalarFromDevice(devHost, queue, deviceSums2);
+        // Launch optimized Monte Carlo kernel
+        launchMonteCarloKernel(devAcc, queue, energy, deviceMasses, deviceSum, deviceSum2, seed);
+        
+        // Copy results back (just 2 scalars)
+        result.sum = copyScalarFromDevice(devHost, queue, deviceSum);
+        result.sumSquared = copyScalarFromDevice(devHost, queue, deviceSum2);
         result.computeStatistics();
         
         mean = result.mean;
@@ -173,49 +177,38 @@ private:
     
     template <typename MassBuf, typename SumBuf>
     void launchMonteCarloKernel(const DevAcc& devAcc, Queue& queue, double energy,
-                                 MassBuf& deviceMasses, SumBuf& deviceSums, 
-                                 SumBuf& deviceSums2, uint64_t seed) {
-        alpaka::Vec<Dim, Idx> const extent{static_cast<Idx>(nEvents_)};
+                                 MassBuf& deviceMasses, SumBuf& deviceSum, 
+                                 SumBuf& deviceSum2, uint64_t seed) {
+        // Configure kernel launch: use reasonable block/grid sizes
+        // Let alpaka figure out optimal work division based on device
+        constexpr Idx blockSize = 256;
+        Idx numBlocks = std::min(
+            static_cast<Idx>((nEvents_ + blockSize - 1) / blockSize),
+            static_cast<Idx>(1024)  // Cap blocks to avoid excessive atomics contention
+        );
+        Idx totalThreads = numBlocks * blockSize;
+        
+        alpaka::Vec<Dim, Idx> const extent{totalThreads};
         
         MonteCarloKernel<Integrand, NumParticles> kernel(
             energy,
             alpaka::getPtrNative(deviceMasses),
             integrand_,
-            alpaka::getPtrNative(deviceSums),
-            alpaka::getPtrNative(deviceSums2),
+            alpaka::getPtrNative(deviceSum),
+            alpaka::getPtrNative(deviceSum2),
             seed,
             nEvents_
         );
         
-        alpaka::KernelCfg<Acc> const kernelCfg = {extent, alpaka::Vec<Dim, Idx>{1}};
-        auto const workDiv = alpaka::getValidWorkDiv(kernelCfg, devAcc, kernel);
+        // Create work division with specified block size
+        alpaka::Vec<Dim, Idx> const elementsPerThread{1};
+        alpaka::Vec<Dim, Idx> const threadsPerBlock{blockSize};
+        alpaka::Vec<Dim, Idx> const blocksPerGrid{numBlocks};
+        
+        auto const workDiv = alpaka::WorkDivMembers<Dim, Idx>(blocksPerGrid, threadsPerBlock, elementsPerThread);
+        
         alpaka::exec<Acc>(queue, workDiv, kernel);
         alpaka::wait(queue);
-    }
-    
-    template <typename SumBuf>
-    void performReduction(const DevAcc& devAcc, Queue& queue, 
-                          SumBuf& deviceSums, SumBuf& deviceSums2) {
-        double* sumsPtr = alpaka::getPtrNative(deviceSums);
-        double* sums2Ptr = alpaka::getPtrNative(deviceSums2);
-        
-        int64_t stride = 1;
-        while (stride < nEvents_) {
-            int64_t numThreads = (nEvents_ + stride * 2 - 1) / (stride * 2);
-            
-            ReductionKernel reduceKernel1(sumsPtr, nEvents_, stride);
-            ReductionKernel reduceKernel2(sums2Ptr, nEvents_, stride);
-            
-            alpaka::Vec<Dim, Idx> const reduceExtent{static_cast<Idx>(numThreads)};
-            alpaka::KernelCfg<Acc> const reduceCfg = {reduceExtent, alpaka::Vec<Dim, Idx>{1}};
-            auto const reduceWorkDiv = alpaka::getValidWorkDiv(reduceCfg, devAcc, reduceKernel1);
-            
-            alpaka::exec<Acc>(queue, reduceWorkDiv, reduceKernel1);
-            alpaka::exec<Acc>(queue, reduceWorkDiv, reduceKernel2);
-            alpaka::wait(queue);
-            
-            stride *= 2;
-        }
     }
     
     template <typename SumBuf>

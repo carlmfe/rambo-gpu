@@ -83,7 +83,14 @@ private:
         auto device = queue.get_device();
         size_t maxWorkGroupSize = device.get_info<sycl::info::device::max_work_group_size>();
         size_t workGroupSize = std::min(maxWorkGroupSize, size_t(256));
-        size_t globalSize = ((nEvents_ + workGroupSize - 1) / workGroupSize) * workGroupSize;
+        
+        // Cap total threads to reduce atomic contention - each thread processes multiple events
+        size_t maxBlocks = 1024;  // Reasonable cap for grid-stride efficiency
+        size_t numBlocks = std::min(
+            static_cast<size_t>((nEvents_ + workGroupSize - 1) / workGroupSize),
+            maxBlocks
+        );
+        size_t globalSize = numBlocks * workGroupSize;
         
         Integrand integrand = integrand_;
         int64_t nEvents = nEvents_;

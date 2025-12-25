@@ -96,6 +96,7 @@ public:
     }
     
     // Launch Monte Carlo kernel (public for CUDA lambda access)
+    // Uses Kokkos team policy with thread-level parallelism for optimal GPU utilization
     void launchMonteCarloKernel(double cmEnergy, Kokkos::View<double*> deviceMasses,
                                  double& sum, double& sumSquared, uint64_t seed) {
         
@@ -106,12 +107,15 @@ public:
         double sumVal = 0.0;
         double sum2Val = 0.0;
         
-        Kokkos::parallel_reduce("MonteCarloKernel", nEvents,
+        // Use RangePolicy - Kokkos handles work distribution optimally
+        // Each thread processes one event, Kokkos manages the parallel reduction
+        Kokkos::parallel_reduce("MonteCarloKernel", 
+            Kokkos::RangePolicy<>(0, nEvents),
             KOKKOS_LAMBDA(const int64_t idx, double& localSum, double& localSum2) {
-                // Get thread-local RNG state
+                // Get thread-local RNG state from pool
                 auto rng = rngPool.get_state();
                 
-                // Copy masses to local array
+                // Copy masses to local array (registers)
                 double massesLocal[NumParticles];
                 for (int j = 0; j < NumParticles; ++j) {
                     massesLocal[j] = deviceMasses(j);
