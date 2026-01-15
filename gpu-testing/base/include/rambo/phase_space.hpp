@@ -1,16 +1,20 @@
-#pragma once
 #ifndef RAMBO_BASE_PHASE_SPACE_HPP
 #define RAMBO_BASE_PHASE_SPACE_HPP
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace rambo {
 
 // =============================================================================
 // Random Number Generation (XorShift64)
 // =============================================================================
-
+/**
+ * Advance a 64-bit xorshift RNG state in-place and return the new state.
+ * @param state RNG state (updated by this call)
+ * @return Updated RNG state value
+ */
 inline uint64_t xorshift64(uint64_t& state) {
     uint64_t x = state;
     x ^= x << 13;
@@ -20,6 +24,11 @@ inline uint64_t xorshift64(uint64_t& state) {
     return x;
 }
 
+/**
+ * Produce a uniform double in [0, 1) using bits from the RNG state.
+ * @param state RNG state (advanced by this call)
+ * @return Uniform random double in [0, 1)
+ */
 inline auto uniformRandom(uint64_t& state) -> double {
     return static_cast<double>(xorshift64(state) >> 11) * (1.0 / 9007199254740992.0);
 }
@@ -33,72 +42,108 @@ template <int nParticles>
 struct RamboAlgorithm {
     static constexpr double tolerance = 1e-14;
     static constexpr int maxIterations = 1000;
-    
-    auto generate(double cmEnergy, const double* masses, 
-                  uint64_t& rngState, double momenta[][4]) const -> double {
-        double q[nParticles][4];
-        double p[nParticles][4];
-        double zCoeff[nParticles];
-        double totalMom[4];
-        double boostVec[3];
-        double momSq[nParticles];
-        double massSq[nParticles];
-        double energies[nParticles];
-        double virtMom[nParticles];
-        
-        const double twoPi = 8.0 * std::atan(1.0);
-        const double logPiOver2 = std::log(twoPi / 4.0);
-        
-        if (nParticles < 1 || nParticles > 10) return 0.0;
-        
-        zCoeff[0] = 0.0;
-        if (nParticles > 1) {
-            zCoeff[1] = 0.0;
-            for (int k = 2; k < nParticles; k++)
-                zCoeff[k] = zCoeff[k-1] + logPiOver2 - 2.0 * std::log(static_cast<double>(k-1));
-            for (int k = 2; k < nParticles; k++)
-                zCoeff[k] = zCoeff[k] - std::log(static_cast<double>(k));
-        }
-        
-        double totalMass = 0.0;
-        int nMassive = 0;
-        for (int i = 0; i < nParticles; i++) {
+    static constexpr int nRandomNumbers = 4 * nParticles;
+
+    // Pre-computed mathematical constants
+    static constexpr double twoPi = 6.283185307179586476925286766559;      // 2*pi
+    static constexpr double logPiOver2 = 0.45158270528945486472619522989488; // log(pi/2)
+
+    // Precomputed zCoeff[n-1] values for n = 1 to 10 (compile-time constant)
+    static constexpr double zCoeffTable[10] = {
+        0.0,                      // n = 1
+        0.0,                      // n = 2
+       -0.24156447527049046409,   // n = 3
+       -1.58174123920909082130,   // n = 4
+       -3.61506518370763618719,   // n = 5
+       -6.15921475197217294095,   // n = 6
+       -9.10882942834487252526,   // n = 7
+      -12.39491634133878683599,   // n = 8
+      -15.96868532678448104889,   // n = 9
+      -19.79376874051108003982,   // n = 10
+    };
+    static constexpr double zCoeffFinal = zCoeffTable[nParticles - 1];
+
+    // Pre-computed quantities from masses
+    double totalMass = 0.0;
+    double totalMassSq = 0.0;
+    int nMassive = 0;
+    double massSq[nParticles] = {};
+
+    /**
+     * Default constructor for massless particles.
+     */
+    RamboAlgorithm() = default;
+
+    /**
+     * Constructor with masses for pre-computation.
+     * @param masses Pointer to array of particle masses (length nParticles).
+     */
+    explicit RamboAlgorithm(const double* masses) {
+        initializeMasses(masses);
+    }
+
+    /**
+     * Initialize mass-dependent quantities. Can be called to update masses.
+     * @param masses Pointer to array of particle masses (length nParticles).
+     */
+    void initializeMasses(const double* masses) {
+        totalMass = 0.0;
+        nMassive = 0;
+        for (int i = 0; i < nParticles; ++i) {
+            massSq[i] = masses[i] * masses[i];
             if (masses[i] != 0.0) nMassive++;
             totalMass += std::fabs(masses[i]);
         }
-        
-        if (totalMass > cmEnergy) return 0.0;
-        
-        for (int i = 0; i < nParticles; i++) {
-            double rand1 = uniformRandom(rngState);
-            double cosTheta = 2.0 * rand1 - 1.0;
+        totalMassSq = totalMass * totalMass;
+    }
+
+public:
+    /**
+     * Generate an n-particle phase-space point.
+     * @param cmEnergy Total center-of-mass energy available.
+     * @param r Array of `4*nParticles` uniform random numbers in [0,1) (per-particle layout).
+     * @param momenta Output array of shape `[nParticles][4]` where index 0 is energy and
+     *                 indices 1..3 are px, py, pz respectively.
+     * @return Natural logarithm of the phase-space weight. Returns 0.0 on failure.
+     * 
+     * Note: Uses pre-computed mass quantities. Call initializeMasses() first if masses changed.
+     */
+    auto generate(double cmEnergy, const double r[4 * nParticles], 
+                  double momenta[][4]) const -> double {
+        double q[nParticles][4];
+        double p[nParticles][4];
+        double totalMom[4];
+        double boostVec[3];
+
+        if (nParticles < 1 || nParticles > 10) return 0.0;
+
+        for (int i = 0; i < nParticles; ++i) {
+            double cosTheta = 2.0 * r[4 * i] - 1.0;
             double sinTheta = std::sqrt(1.0 - cosTheta * cosTheta);
-            double phi = twoPi * uniformRandom(rngState);
-            rand1 = uniformRandom(rngState);
-            double rand2 = uniformRandom(rngState);
+            double phi = twoPi * r[4 * i + 1];
             
-            q[i][0] = -std::log(rand1 * rand2);
+            q[i][0] = -std::log(r[4 * i + 2] * r[4 * i + 3]);
             q[i][3] = q[i][0] * cosTheta;
             q[i][2] = q[i][0] * sinTheta * std::cos(phi);
             q[i][1] = q[i][0] * sinTheta * std::sin(phi);
         }
-        
-        for (int mu = 0; mu < 4; mu++) totalMom[mu] = 0.0;
-        for (int i = 0; i < nParticles; i++) {
-            for (int mu = 0; mu < 4; mu++) {
+
+        for (int mu = 0; mu < 4; ++mu) totalMom[mu] = 0.0;
+        for (int i = 0; i < nParticles; ++i) {
+            for (int mu = 0; mu < 4; ++mu) {
                 totalMom[mu] += q[i][mu];
             }
         }
-        
+
         double invariantMass = std::sqrt(totalMom[0]*totalMom[0] - totalMom[1]*totalMom[1] 
                                         - totalMom[2]*totalMom[2] - totalMom[3]*totalMom[3]);
-        for (int k = 0; k < 3; k++) {
+        for (int k = 0; k < 3; ++k) {
             boostVec[k] = -totalMom[k+1] / invariantMass;
         }
         double gamma = totalMom[0] / invariantMass;
         double boostFactor = 1.0 / (1.0 + gamma);
         double scaleFactor = cmEnergy / invariantMass;
-        
+
         for (int i = 0; i < nParticles; ++i) {
             double bDotQ = boostVec[0]*q[i][1] + boostVec[1]*q[i][2] + boostVec[2]*q[i][3];
             for (int k = 1; k < 4; ++k) {
@@ -106,12 +151,12 @@ struct RamboAlgorithm {
             }
             p[i][0] = scaleFactor * (gamma * q[i][0] + bDotQ);
         }
-        
+
         double logWeight = logPiOver2;
-        if (nParticles != 2) {
-            logWeight += (2.0 * nParticles - 4.0) * std::log(cmEnergy) + zCoeff[nParticles-1];
+        if constexpr (nParticles != 2) {
+            logWeight += (2.0 * nParticles - 4.0) * std::log(cmEnergy) + zCoeffFinal;
         }
-        
+
         if (nMassive == 0) {
             for (int i = 0; i < nParticles; ++i) {
                 for (int mu = 0; mu < 4; ++mu) {
@@ -120,17 +165,22 @@ struct RamboAlgorithm {
             }
             return logWeight;
         }
-        
-        double xMax = std::sqrt(1.0 - (totalMass * totalMass) / (cmEnergy * cmEnergy));
+
+        // Make a conformal transformation to give particles mass
+        double momSq[nParticles];
+        double energies[nParticles];
+        double virtMom[nParticles];
+
+        double cmEnergySq = cmEnergy * cmEnergy;
+        double xMax = std::sqrt(1.0 - totalMassSq / cmEnergySq);
         for (int i = 0; i < nParticles; ++i) {
-            massSq[i] = masses[i] * masses[i];
             momSq[i] = p[i][0] * p[i][0];
         }
-        
+
         int iteration = 0;
         double x = xMax;
         double accuracyGoal = cmEnergy * tolerance;
-        
+
         while (true) {
             double f = -cmEnergy;
             double df = 0.0;
@@ -144,33 +194,337 @@ struct RamboAlgorithm {
             if (++iteration > maxIterations) break;
             x = x - f / (df * x);
         }
-        
-        for (int i = 0; i < nParticles; i++) {
+
+        for (int i = 0; i < nParticles; ++i) {
             virtMom[i] = x * p[i][0];
-            for (int k = 1; k < 4; k++) {
+            for (int k = 1; k < 4; ++k) {
                 p[i][k] *= x;
             }
             p[i][0] = energies[i];
         }
-        
+
         double weightProduct = 1.0;
         double weightSum = 0.0;
-        for (int i = 0; i < nParticles; i++) {
+        for (int i = 0; i < nParticles; ++i) {
             weightProduct *= virtMom[i] / energies[i];
             weightSum += (virtMom[i] * virtMom[i]) / energies[i];
         }
         double logWeightMassive = (2.0 * nParticles - 3.0) * std::log(x) 
                                  + std::log(weightProduct / weightSum * cmEnergy);
-        
+
         logWeight += logWeightMassive;
-        
+
         for (int i = 0; i < nParticles; ++i) {
             for (int mu = 0; mu < 4; ++mu) {
                 momenta[i][mu] = p[i][mu];
             }
         }
-        
+
         return logWeight;
+    }
+
+    /**
+     * RNG-based overload: fills a local random array from `rngState` then
+     * calls the main `generate(...)` overload.
+     * @param cmEnergy Total center-of-mass energy available.
+     * @param rngState Mutable RNG state (advanced by this call).
+     * @param momenta Output array `[nParticles][4]` for generated 4-momenta.
+     * @return Natural logarithm of the phase-space weight.
+     */
+    auto generate(double cmEnergy, uint64_t& rngState, double momenta[][4]) const -> double {
+        double r[4 * nParticles];
+        for (int i = 0; i < 4 * nParticles; ++i) {
+            r[i] = uniformRandom(rngState);
+        }
+        return generate(cmEnergy, r, momenta);
+    }
+};
+
+// =============================================================================
+// RAMBO "Diet" variant
+// =============================================================================
+// Reference: Plätzer, S, ArXiv: 1308.2922 [hep-ph]
+
+template <int nParticles>
+struct RamboDietAlgorithm {
+    static constexpr double tolerance = 1e-14;
+    static constexpr int maxIterations = 1000;
+    static constexpr int nRandomNumbers = 3 * nParticles - 4;
+
+    // Pre-computed mathematical constants
+    static constexpr double twoPi = 6.283185307179586476925286766559;      // 2*pi
+    static constexpr double logPiOver2 = 0.45158270528945486472619522989488; // log(pi/2)
+
+    // Precomputed zCoeff[n-1] values for n = 1 to 10 (compile-time constant)
+    static constexpr double zCoeffTable[10] = {
+        0.0,                      // n = 1
+        0.0,                      // n = 2
+       -0.24156447527049046409,   // n = 3
+       -1.58174123920909082130,   // n = 4
+       -3.61506518370763618719,   // n = 5
+       -6.15921475197217294095,   // n = 6
+       -9.10882942834487252526,   // n = 7
+      -12.39491634133878683599,   // n = 8
+      -15.96868532678448104889,   // n = 9
+      -19.79376874051108003982,   // n = 10
+    };
+    static constexpr double zCoeffFinal = zCoeffTable[nParticles - 1];
+
+    // Pre-computed quantities from masses
+    double totalMass = 0.0;
+    double totalMassSq = 0.0;
+    int nMassive = 0;
+    double massSq[nParticles] = {};
+
+    /**
+     * Default constructor for massless particles.
+     */
+    RamboDietAlgorithm() = default;
+
+    /**
+     * Constructor with masses for pre-computation.
+     * @param masses Pointer to array of particle masses (length nParticles).
+     */
+    explicit RamboDietAlgorithm(const double* masses) {
+        initializeMasses(masses);
+    }
+
+    /**
+     * Initialize mass-dependent quantities. Can be called to update masses.
+     * @param masses Pointer to array of particle masses (length nParticles).
+     */
+    void initializeMasses(const double* masses) {
+        totalMass = 0.0;
+        nMassive = 0;
+        for (int i = 0; i < nParticles; ++i) {
+            massSq[i] = masses[i] * masses[i];
+            if (masses[i] != 0.0) nMassive++;
+            totalMass += std::fabs(masses[i]);
+        }
+        totalMassSq = totalMass * totalMass;
+    }
+
+public:
+    /**
+     * Apply a Lorentz boost to a 4-vector `p` in-place.
+     * @param p Array `[E, px, py, pz]` (modified in-place).
+     * @param boostVec 3-component velocity vector `(beta_x, beta_y, beta_z)`.
+     */
+    auto boost(double p[4], const double* boostVec) const -> void {
+        double b2 = boostVec[0]*boostVec[0] + boostVec[1]*boostVec[1] + boostVec[2]*boostVec[2];
+        if (b2 >= 1.0 || b2 <= 0.0) return; // Invalid boost; leave 'p' unchanged.
+        double gamma = 1.0 / std::sqrt(1.0 - b2);
+        double bDotP = boostVec[0]*p[1] + boostVec[1]*p[2] + boostVec[2]*p[3];
+        double factor = (gamma - 1.0) * bDotP / b2 - gamma * p[0];
+        
+        p[0] = gamma * (p[0] - bDotP);
+        for (int k = 1; k < 4; ++k) {
+            p[k] += boostVec[k-1] * factor;
+        }
+    }
+
+    #if nParticles > 2
+    /**
+     * Newton solve for the intermediate variable `u` used in the Diet variant.
+     * @param u Initial guess on input; updated with the solution on output.
+     * @param r Uniform random number driving the equation.
+     * @param index Current particle index (affects equation dimension).
+     */
+    inline auto solveForU(double &u, double r, int index) const -> void {
+        int iteration = 0;
+        const int m = nParticles - index;
+        // sensible initial guess if caller didn't set one
+        u = std::pow(r, 1.0 / static_cast<double>(m - 1));
+        if (u <= 0.0) u = 1e-12;
+        if (u >= 1.0) u = 1.0 - 1e-12;
+        while (true) {
+            double f = uEquation(u, r, index);
+            double df = dUEquation(u, index);
+            if (std::fabs(f) <= tolerance) break;
+            if (++iteration > maxIterations) break;
+            if (df == 0.0) break;
+            u = u - f / df;
+            if (u <= 0.0) u = 1e-12;
+            if (u >= 1.0) u = 1.0 - 1e-12;
+        }
+    }
+
+    /**
+     * Evaluate the equation whose root is `u` (used by Newton iterations).
+     * @param u Variable to evaluate.
+     * @param r Random parameter from RNG.
+     * @param index Particle index affecting dimension.
+     * @return Value of the equation at `u`.
+     */
+    auto uEquation(double u, double r, int index) const -> double {
+        const int m = nParticles - index; // m >= 2
+        return r - m * std::pow(u, m - 1) + (m - 1) * std::pow(u, m);
+    }
+
+    /**
+     * Derivative of `uEquation` with respect to `u`.
+     * @param u Point at which to compute derivative.
+     * @param index Particle index affecting dimension.
+     * @return d/du uEquation(u)
+     */
+    auto dUEquation(double u, int index) const -> double {
+        const int m = nParticles - index; // m >= 2
+        return m * (m - 1) * (-std::pow(u, m - 2) + std::pow(u, m - 1));
+    }
+    #endif
+
+    /**
+     * Diet-variant generate using pre-computed masses.
+     * @param cmEnergy Center-of-mass energy.
+     * @param r Array of `3*nParticles-4` uniform random numbers.
+     * @param momenta Output array `[nParticles][4]` for generated 4-momenta.
+     * @return Natural logarithm of the phase-space weight.
+     * 
+     * Note: Uses pre-computed mass quantities. Call initializeMasses() first if masses changed.
+     */
+    auto generate(double cmEnergy, const double r[3 * nParticles - 4], 
+                  double momenta[nParticles][4]) const -> double {
+        double QPrev[4]{cmEnergy, 0.0, 0.0, 0.0};
+        double QCurr[4]{cmEnergy, 0.0, 0.0, 0.0};
+        double MPrev = cmEnergy;
+        double MCurr = MPrev;
+        double u[nParticles - 2];
+        double cosTheta, sinTheta, phi;
+        double q;
+        double p[nParticles][4];
+        double boostVec[3];
+
+        if (totalMass > cmEnergy) return -std::numeric_limits<double>::infinity();
+
+        // Generate phase space for massless particles first
+        for (int i = 1; i < nParticles; ++i) {
+            if constexpr (nParticles > 2) {
+                if (i < nParticles - 1) {
+                    // sensible initial guess reduces Newton iterations
+                    const int m = nParticles - i; // m >= 2
+                    u[i - 1] = std::pow(r[i - 1], 1.0 / static_cast<double>(m - 1));
+                    solveForU(u[i - 1], r[i - 1], i);
+                    MCurr = u[i - 1] * MPrev;
+                } else {
+                    MCurr = 0.0;
+                }
+            } else {
+                MCurr = 0.0;
+            }
+            cosTheta = 2.0 * r[nParticles - 4 + 2 * i] - 1.0;
+            sinTheta = std::sqrt(1.0 - cosTheta * cosTheta);
+            phi = twoPi * r[nParticles - 3 + 2 * i];
+            q = 0.5 * (MPrev * MPrev - MCurr * MCurr) / MPrev;
+            p[i - 1][0] = q;
+            p[i - 1][1] = q * sinTheta * std::cos(phi);
+            p[i - 1][2] = q * sinTheta * std::sin(phi);
+            p[i - 1][3] = q * cosTheta;
+            QCurr[0] = std::sqrt(p[i - 1][0] * p[i - 1][0] + MCurr * MCurr);
+            QCurr[1] = -p[i - 1][1];
+            QCurr[2] = -p[i - 1][2];
+            QCurr[3] = -p[i - 1][3];
+
+            if constexpr (nParticles > 2) {
+                if (i > 1) {
+                    boostVec[0] = QPrev[1] / QPrev[0];
+                    boostVec[1] = QPrev[2] / QPrev[0];
+                    boostVec[2] = QPrev[3] / QPrev[0];
+                    boost(p[i - 1], boostVec);
+                    boost(QCurr, boostVec);
+                }
+
+                MPrev = MCurr;
+                for (int k = 0; k < 4; ++k) {
+                    QPrev[k] = QCurr[k];
+                }
+            }
+        }
+        // Last particle
+        for (int k = 0; k < 4; ++k) {
+            p[nParticles - 1][k] = QCurr[k];
+        }
+
+        double logWeight = logPiOver2;
+        if constexpr (nParticles > 2) {
+            logWeight += (2.0 * nParticles - 4.0) * std::log(cmEnergy) + zCoeffFinal;
+        }
+
+        if (nMassive == 0) {
+            for (int i = 0; i < nParticles; ++i) {
+                for (int mu = 0; mu < 4; ++mu) {
+                    momenta[i][mu] = p[i][mu];
+                }
+            }
+            return logWeight;
+        }
+
+        // Make a conformal transformation to give particles mass
+        double momSq[nParticles];
+        double energies[nParticles];
+        double virtMom[nParticles];
+
+        double cmEnergySq = cmEnergy * cmEnergy;
+        double xMax = std::sqrt(1.0 - totalMassSq / cmEnergySq);
+        for (int i = 0; i < nParticles; ++i) {
+            momSq[i] = p[i][0] * p[i][0];
+        }
+
+        int iteration = 0;
+        double x = xMax;
+        double accuracyGoal = cmEnergy * tolerance;
+
+        while (true) {
+            double f = -cmEnergy;
+            double df = 0.0;
+            double x2 = x * x;
+            for (int i = 0; i < nParticles; ++i) {
+                energies[i] = std::sqrt(massSq[i] + x2 * momSq[i]);
+                f += energies[i];
+                df += momSq[i] / energies[i];
+            }
+            if (std::fabs(f) <= accuracyGoal) break;
+            if (++iteration > maxIterations) break;
+            x = x - f / (df * x);
+        }
+
+        for (int i = 0; i < nParticles; ++i) {
+            virtMom[i] = x * p[i][0];
+            for (int k = 1; k < 4; ++k) {
+                p[i][k] *= x;
+            }
+            p[i][0] = energies[i];
+        }
+
+        double weightProduct = 1.0;
+        double weightSum = 0.0;
+        for (int i = 0; i < nParticles; ++i) {
+            weightProduct *= virtMom[i] / energies[i];
+            weightSum += (virtMom[i] * virtMom[i]) / energies[i];
+        }
+        double logWeightMassive = (2.0 * nParticles - 3.0) * std::log(x) 
+                                 + std::log(weightProduct / weightSum * cmEnergy);
+
+        logWeight += logWeightMassive;
+
+        for (int i = 0; i < nParticles; ++i) {
+            for (int mu = 0; mu < 4; ++mu) {
+                momenta[i][mu] = p[i][mu];
+            }
+        }
+
+        return logWeight;
+    }
+
+    /**
+     * RNG-based overload.
+     */
+    auto generate(double cmEnergy, uint64_t& rngState, 
+                  double momenta[nParticles][4]) const -> double {
+        double r[3 * nParticles - 4];
+        for (int i = 0; i < 3 * nParticles - 4; ++i) {
+            r[i] = uniformRandom(rngState);
+        }
+        return generate(cmEnergy, r, momenta);
     }
 };
 
@@ -181,14 +535,37 @@ struct RamboAlgorithm {
 template <int nParticles, typename Algorithm = RamboAlgorithm<nParticles>>
 struct PhaseSpaceGenerator {
     double cmEnergy;
-    const double* masses;
     Algorithm algorithm;
-    
-    PhaseSpaceGenerator(double energy, const double* m) 
-        : cmEnergy(energy), masses(m), algorithm() {}
-    
+
+    /// Number of random numbers required by the underlying algorithm.
+    static constexpr int nRandomNumbers = Algorithm::nRandomNumbers;
+
+    /**
+     * Constructor that pre-computes mass-dependent quantities in the algorithm.
+     * @param energy Center-of-mass energy used for generated points.
+     * @param masses Pointer to an array of length `nParticles` with particle masses.
+     */
+    PhaseSpaceGenerator(double energy, const double* masses) 
+        : cmEnergy(energy), algorithm(masses) {}
+
+    /**
+     * Generate a phase-space point using an RNG state.
+     * @param rngState Mutable RNG state (will be advanced).
+     * @param momenta Output array `[nParticles][4]` (E, px, py, pz).
+     * @return Natural logarithm of the phase-space weight.
+     */
     auto operator()(uint64_t& rngState, double momenta[][4]) const -> double {
-        return algorithm.generate(cmEnergy, masses, rngState, momenta);
+        return algorithm.generate(cmEnergy, rngState, momenta);
+    }
+
+    /**
+     * Generate a phase-space point using pre-generated random numbers.
+     * @param r Array of `nRandomNumbers` uniform random values in [0, 1).
+     * @param momenta Output array `[nParticles][4]` (E, px, py, pz).
+     * @return Natural logarithm of the phase-space weight.
+     */
+    auto operator()(const double* r, double momenta[][4]) const -> double {
+        return algorithm.generate(cmEnergy, r, momenta);
     }
 };
 

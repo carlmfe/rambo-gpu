@@ -32,7 +32,7 @@ struct IntegrationResult {
 // Integrator Class
 // =============================================================================
 
-template <typename Integrand, int NumParticles>
+template <typename Integrand, int NumParticles, typename Algorithm = RamboAlgorithm<NumParticles>>
 class RamboIntegrator {
 public:
     RamboIntegrator(int64_t nEvents, const Integrand& integrand)
@@ -106,10 +106,12 @@ private:
                     double localSum = 0.0;
                     double localSum2 = 0.0;
                     
+                    // Create generator once per thread - pre-computes mass-dependent quantities
+                    PhaseSpaceGenerator<NumParticles, Algorithm> rambo(cmEnergy, deviceMasses);
+                    
                     int64_t gridSize = item.get_global_range(0);
                     while (idx < nEvents) {
                         double momenta[NumParticles][4];
-                        PhaseSpaceGenerator<NumParticles> rambo(cmEnergy, deviceMasses);
                         double logWeight = rambo(rngState, momenta);
                         
                         double fx = integrand.evaluate(momenta);

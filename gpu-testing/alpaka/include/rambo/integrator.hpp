@@ -21,6 +21,16 @@ concept IntegrandConcept = requires(T integrand, const double momenta[][4]) {
 };
 
 // =============================================================================
+// Algorithm concept: simple marker-based check
+// Algorithms (RamboAlgorithm, RamboDietAlgorithm) provide a nested
+// `algorithm_tag` type to satisfy this concept. This keeps the concept
+// simple and robust across device/host callable signatures.
+// =============================================================================
+
+template <typename T>
+concept AlgorithmConcept = requires { typename T::algorithm_tag; };
+
+// =============================================================================
 // Result structure
 // =============================================================================
 
@@ -46,7 +56,8 @@ struct IntegrationResult {
 // This eliminates per-event global memory writes and multi-pass reduction.
 // =============================================================================
 
-template <IntegrandConcept Integrand, int NumParticles>
+template <typename Algorithm, IntegrandConcept Integrand, int NumParticles>
+    requires AlgorithmConcept<Algorithm>
 struct MonteCarloKernel {
     double energy;
     const double* masses;
@@ -70,26 +81,22 @@ struct MonteCarloKernel {
         auto const threadIdx = alpaka::mapIdx<1u>(globalThreadIdx, globalThreadExtent)[0];
         auto const gridSize = alpaka::mapIdx<1u>(globalThreadExtent, globalThreadExtent)[0];
         
+        // Initialize RNG state uniquely per thread (same formula as CUDA/SYCL)
+        uint64_t rngState = baseSeed ^ (static_cast<uint64_t>(threadIdx) * 2685821657736338717ULL);
+        if (rngState == 0) rngState = baseSeed + 1;
+        
         // Thread-local accumulators (no global memory traffic until end)
         double localSum = 0.0;
         double localSum2 = 0.0;
         
+        // Create generator once per thread - pre-computes mass-dependent quantities
+        PhaseSpaceGenerator<NumParticles, Algorithm> rambo(energy, masses);
+        
         // Grid-stride loop: each thread processes multiple events
         for (int64_t idx = static_cast<int64_t>(threadIdx); idx < nEvents; idx += static_cast<int64_t>(gridSize)) {
-            // Create RNG with unique seed per event (not per thread)
-            auto engine = alpaka::rand::engine::createDefault(
-                acc, 
-                static_cast<uint32_t>(baseSeed + static_cast<uint64_t>(idx)),
-                static_cast<uint32_t>((baseSeed + static_cast<uint64_t>(idx)) >> 32)
-            );
-            
-            alpaka::rand::RandDefault rand;
-            auto dist = alpaka::rand::distribution::createUniformReal<double>(rand);
-            
             // Generate phase space point
             double momenta[NumParticles][4];
-            PhaseSpaceGenerator<NumParticles> rambo(energy, masses);
-            double logWeight = rambo(engine, dist, momenta);
+            double logWeight = rambo(rngState, momenta);
             
             // Evaluate integrand
             double fx = integrand.evaluate(momenta);
@@ -110,7 +117,8 @@ struct MonteCarloKernel {
 // Integrator Class
 // =============================================================================
 
-template <typename TAccTag, IntegrandConcept Integrand, int NumParticles>
+template <typename TAccTag, IntegrandConcept Integrand, int NumParticles, typename Algorithm = RamboAlgorithm<NumParticles>>
+    requires AlgorithmConcept<Algorithm>
 class RamboIntegrator {
 public:
     using Dim = alpaka::DimInt<1>;
@@ -190,7 +198,7 @@ private:
         
         alpaka::Vec<Dim, Idx> const extent{totalThreads};
         
-        MonteCarloKernel<Integrand, NumParticles> kernel(
+        MonteCarloKernel<Algorithm, Integrand, NumParticles> kernel(
             energy,
             alpaka::getPtrNative(deviceMasses),
             integrand_,

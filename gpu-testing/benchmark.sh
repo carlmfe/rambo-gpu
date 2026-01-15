@@ -29,13 +29,13 @@
 set +e
 
 # Parse options
-SKIP_BUILD=false
+SKIP_BUILD=true
 POSITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --skip-build)
-            SKIP_BUILD=true
+        --build)
+            SKIP_BUILD=false
             shift
             ;;
         --help|-h)
@@ -191,7 +191,7 @@ CUDA_OK=false
 SYCL_OK=false
 
 if $SKIP_BUILD; then
-    echo -e "${YELLOW}Skipping build phase (--skip-build)${NC}"
+    echo -e "${YELLOW}Skipping build phase (--build to build)${NC}"
     echo -e "Checking for existing executables..."
     echo ""
     

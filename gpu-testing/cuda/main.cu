@@ -18,7 +18,7 @@
 // =============================================================================
 // Benchmark helper
 // =============================================================================
-template <typename Integrand, int nParticles>
+template <typename Integrand, int nParticles, typename Algorithm = rambo::RamboAlgorithm<nParticles>>
 void runBenchmark(const std::string& backendName, 
                   int64_t nEvents, 
                   double cmEnergy, 
@@ -35,7 +35,7 @@ void runBenchmark(const std::string& backendName,
     
     // Warmup run (smaller)
     {
-        rambo::RamboIntegrator<Integrand, nParticles> warmup(
+        rambo::RamboIntegrator<Integrand, nParticles, Algorithm> warmup(
             std::min(nEvents / 10, int64_t(10000)), integrand);
         warmup.run(cmEnergy, masses, mean, error, seed);
     }
@@ -43,7 +43,7 @@ void runBenchmark(const std::string& backendName,
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
     
-    rambo::RamboIntegrator<Integrand, nParticles> integrator(nEvents, integrand);
+    rambo::RamboIntegrator<Integrand, nParticles, Algorithm> integrator(nEvents, integrand);
     integrator.run(cmEnergy, masses, mean, error, seed);
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -98,8 +98,8 @@ int main(int argc, char* argv[]) {
     std::cout << "Fine structure constant (alpha): " << alphaEM << std::endl;
     std::cout << std::endl;
     
-    // Run benchmark
-    runBenchmark<rambo::DrellYanIntegrand, nParticles>(
+    // Run benchmark using RAMBO on diet phase-space
+    runBenchmark<rambo::DrellYanIntegrand, nParticles, rambo::RamboAlgorithm<nParticles>>(
         "CUDA GPU", nEvents, cmEnergy, masses, integrand, seed);
     
     // Analytic verification

@@ -4,6 +4,7 @@
 
 #include <sycl/sycl.hpp>
 #include <cstdint>
+#include <limits>
 
 namespace rambo {
 
@@ -32,51 +33,66 @@ template <int nParticles>
 struct RamboAlgorithm {
     static constexpr double tolerance = 1e-14;
     static constexpr int maxIterations = 1000;
-    
-    auto generate(double cmEnergy, const double* masses, 
-                  uint64_t& rngState, double momenta[][4]) const -> double {
-        double q[nParticles][4];
-        double p[nParticles][4];
-        double zCoeff[nParticles];
-        double totalMom[4];
-        double boostVec[3];
-        double momSq[nParticles];
-        double massSq[nParticles];
-        double energies[nParticles];
-        double virtMom[nParticles];
-        
-        const double twoPi = 8.0 * sycl::atan(1.0);
-        const double logPiOver2 = sycl::log(twoPi / 4.0);
-        
-        if (nParticles < 1 || nParticles > 10) return 0.0;
-        
-        zCoeff[0] = 0.0;
-        if (nParticles > 1) {
-            zCoeff[1] = 0.0;
-            for (int k = 2; k < nParticles; k++)
-                zCoeff[k] = zCoeff[k-1] + logPiOver2 - 2.0 * sycl::log(static_cast<double>(k-1));
-            for (int k = 2; k < nParticles; k++)
-                zCoeff[k] = zCoeff[k] - sycl::log(static_cast<double>(k));
-        }
-        
-        double totalMass = 0.0;
-        int nMassive = 0;
-        for (int i = 0; i < nParticles; i++) {
+    static constexpr int nRandomNumbers = 4 * nParticles;
+
+    // Pre-computed mathematical constants
+    static constexpr double twoPi = 6.283185307179586476925286766559;
+    static constexpr double logPiOver2 = 0.45158270528945486472619522989488;
+
+    // Precomputed zCoeff[n-1] values for n = 1 to 10 (compile-time constant)
+    static constexpr double zCoeffTable[10] = {
+        0.0,                      // n = 1
+        0.0,                      // n = 2
+       -0.24156447527049046409,   // n = 3
+       -1.58174123920909082130,   // n = 4
+       -3.61506518370763618719,   // n = 5
+       -6.15921475197217294095,   // n = 6
+       -9.10882942834487252526,   // n = 7
+      -12.39491634133878683599,   // n = 8
+      -15.96868532678448104889,   // n = 9
+      -19.79376874051108003982,   // n = 10
+    };
+    static constexpr double zCoeffFinal = zCoeffTable[nParticles - 1];
+
+    // Pre-computed quantities from masses
+    double totalMass = 0.0;
+    double totalMassSq = 0.0;
+    int nMassive = 0;
+    double massSq[nParticles] = {};
+
+    RamboAlgorithm() = default;
+
+    explicit RamboAlgorithm(const double* masses) {
+        initializeMasses(masses);
+    }
+
+    void initializeMasses(const double* masses) {
+        totalMass = 0.0;
+        nMassive = 0;
+        for (int i = 0; i < nParticles; ++i) {
+            massSq[i] = masses[i] * masses[i];
             if (masses[i] != 0.0) nMassive++;
             totalMass += sycl::fabs(masses[i]);
         }
+        totalMassSq = totalMass * totalMass;
+    }
+
+public:
+    auto generate(double cmEnergy, const double r[4 * nParticles], 
+                  double momenta[][4]) const -> double {
+        double q[nParticles][4];
+        double p[nParticles][4];
+        double totalMom[4];
+        double boostVec[3];
         
-        if (totalMass > cmEnergy) return 0.0;
+        if (nParticles < 1 || nParticles > 10) return 0.0;
         
         for (int i = 0; i < nParticles; i++) {
-            double rand1 = uniformRandom(rngState);
-            double cosTheta = 2.0 * rand1 - 1.0;
+            double cosTheta = 2.0 * r[4 * i] - 1.0;
             double sinTheta = sycl::sqrt(1.0 - cosTheta * cosTheta);
-            double phi = twoPi * uniformRandom(rngState);
-            rand1 = uniformRandom(rngState);
-            double rand2 = uniformRandom(rngState);
+            double phi = twoPi * r[4 * i + 1];
             
-            q[i][0] = -sycl::log(rand1 * rand2);
+            q[i][0] = -sycl::log(r[4 * i + 2] * r[4 * i + 3]);
             q[i][3] = q[i][0] * cosTheta;
             q[i][2] = q[i][0] * sinTheta * sycl::cos(phi);
             q[i][1] = q[i][0] * sinTheta * sycl::sin(phi);
@@ -108,9 +124,9 @@ struct RamboAlgorithm {
         
         double logWeight = logPiOver2;
         if (nParticles != 2) {
-            logWeight += (2.0 * nParticles - 4.0) * sycl::log(cmEnergy) + zCoeff[nParticles-1];
+            logWeight += (2.0 * nParticles - 4.0) * sycl::log(cmEnergy) + zCoeffFinal;
         }
-        
+
         if (nMassive == 0) {
             for (int i = 0; i < nParticles; ++i) {
                 for (int mu = 0; mu < 4; ++mu) {
@@ -120,9 +136,14 @@ struct RamboAlgorithm {
             return logWeight;
         }
         
-        double xMax = sycl::sqrt(1.0 - (totalMass * totalMass) / (cmEnergy * cmEnergy));
+        // Make a conformal transformation to give particles mass
+        double momSq[nParticles];
+        double energies[nParticles];
+        double virtMom[nParticles];
+        
+        double cmEnergySq = cmEnergy * cmEnergy;
+        double xMax = sycl::sqrt(1.0 - totalMassSq / cmEnergySq);
         for (int i = 0; i < nParticles; ++i) {
-            massSq[i] = masses[i] * masses[i];
             momSq[i] = p[i][0] * p[i][0];
         }
         
@@ -171,6 +192,236 @@ struct RamboAlgorithm {
         
         return logWeight;
     }
+
+    auto generate(double cmEnergy, uint64_t& rngState, 
+                  double momenta[][4]) const -> double {
+        double r[4 * nParticles];
+        for (int i = 0; i < 4 * nParticles; ++i) {
+            r[i] = uniformRandom(rngState);
+        }
+        return generate(cmEnergy, r, momenta);
+    }
+};
+
+// =============================================================================
+// RAMBO "Diet" variant (Plätzer)
+// =============================================================================
+
+template <int nParticles>
+struct RamboDietAlgorithm {
+    static constexpr double tolerance = 1e-14;
+    static constexpr int maxIterations = 1000;
+    static constexpr int nRandomNumbers = 3 * nParticles - 4;
+
+    // Pre-computed mathematical constants
+    static constexpr double twoPi = 6.283185307179586476925286766559;
+    static constexpr double logPiOver2 = 0.45158270528945486472619522989488;
+
+    // Precomputed zCoeff[n-1] values for n = 1 to 10 (compile-time constant)
+    static constexpr double zCoeffTable[10] = {
+        0.0,                      // n = 1
+        0.0,                      // n = 2
+       -0.24156447527049046409,   // n = 3
+       -1.58174123920909082130,   // n = 4
+       -3.61506518370763618719,   // n = 5
+       -6.15921475197217294095,   // n = 6
+       -9.10882942834487252526,   // n = 7
+      -12.39491634133878683599,   // n = 8
+      -15.96868532678448104889,   // n = 9
+      -19.79376874051108003982    // n = 10
+    };
+    static constexpr double zCoeffFinal = zCoeffTable[nParticles - 1];
+
+    // Pre-computed quantities from masses
+    double totalMass = 0.0;
+    double totalMassSq = 0.0;
+    int nMassive = 0;
+    double massSq[nParticles] = {};
+
+    RamboDietAlgorithm() = default;
+
+    explicit RamboDietAlgorithm(const double* masses) {
+        initializeMasses(masses);
+    }
+
+    void initializeMasses(const double* masses) {
+        totalMass = 0.0;
+        nMassive = 0;
+        for (int i = 0; i < nParticles; ++i) {
+            massSq[i] = masses[i] * masses[i];
+            if (masses[i] != 0.0) nMassive++;
+            totalMass += sycl::fabs(masses[i]);
+        }
+        totalMassSq = totalMass * totalMass;
+    }
+
+public:
+    auto uEquation(double u, double r, int index) const -> double {
+        int m = nParticles - index;
+        return r - m * sycl::pow(u, static_cast<double>(m - 1)) + (m - 1) * sycl::pow(u, static_cast<double>(m));
+    }
+
+    auto dUEquation(double u, int index) const -> double {
+        int m = nParticles - index;
+        return m * (m - 1) * (-sycl::pow(u, static_cast<double>(m - 2)) + sycl::pow(u, static_cast<double>(m - 1)));
+    }
+
+    inline void solveForU(double &u, double r, int index) const {
+        int iteration = 0;
+        int m = nParticles - index;
+        u = sycl::pow(r, 1.0 / static_cast<double>(m - 1));
+        if (u <= 0.0) u = 1e-12;
+        if (u >= 1.0) u = 1.0 - 1e-12;
+        while (true) {
+            double f = uEquation(u, r, index);
+            double df = dUEquation(u, index);
+            if (sycl::fabs(f) <= tolerance) break;
+            if (++iteration > maxIterations) break;
+            if (df == 0.0) break;
+            u = u - f / df;
+            if (u <= 0.0) u = 1e-12;
+            if (u >= 1.0) u = 1.0 - 1e-12;
+        }
+    }
+
+    void boost_p(double p[4], const double* boostVec) const {
+        double b2 = boostVec[0]*boostVec[0] + boostVec[1]*boostVec[1] + boostVec[2]*boostVec[2];
+        if (b2 >= 1.0 || b2 <= 0.0) return;
+        double gamma = 1.0 / sycl::sqrt(1.0 - b2);
+        double bDotP = boostVec[0]*p[1] + boostVec[1]*p[2] + boostVec[2]*p[3];
+        double factor = (gamma - 1.0) * bDotP / b2 - gamma * p[0];
+        p[0] = gamma * (p[0] - bDotP);
+        for (int k = 1; k < 4; ++k) p[k] += boostVec[k-1] * factor;
+    }
+
+    auto generate(double cmEnergy, const double r[3 * nParticles - 4],
+                  double momenta[nParticles][4]) const -> double {
+        double QPrev[4]; QPrev[0]=cmEnergy; QPrev[1]=QPrev[2]=QPrev[3]=0.0;
+        double QCurr[4];
+        double MPrev = cmEnergy;
+        double MCurr = MPrev;
+
+        double p[nParticles][4];
+        double boostVec[3];
+        double u[(nParticles > 2) ? (nParticles - 2) : 1];
+
+        if (totalMass > cmEnergy) return -1e300;
+
+        for (int i = 1; i < nParticles; i++) {
+            if (nParticles > 2) {
+                if (i < nParticles - 1) {
+                    solveForU(u[i-1], r[i-1], i);
+                    MCurr = u[i-1] * MPrev;
+                } else {
+                    MCurr = 0.0;
+                }
+            } else {
+                MCurr = 0.0;
+            }
+
+            double cosTheta = 2.0 * r[nParticles - 4 + 2 * i] - 1.0;
+            double sinTheta = sycl::sqrt(sycl::fmax(0.0, 1.0 - cosTheta * cosTheta));
+            double phi = twoPi * r[nParticles - 3 + 2 * i];
+
+            double q = 0.5 * (MPrev * MPrev - MCurr * MCurr) / MPrev;
+            p[i-1][0] = q;
+            p[i-1][1] = q * sinTheta * sycl::cos(phi);
+            p[i-1][2] = q * sinTheta * sycl::sin(phi);
+            p[i-1][3] = q * cosTheta;
+
+            QCurr[0] = sycl::sqrt(p[i-1][0]*p[i-1][0] + MCurr*MCurr);
+            QCurr[1] = -p[i-1][1];
+            QCurr[2] = -p[i-1][2];
+            QCurr[3] = -p[i-1][3];
+
+            if (nParticles > 2) {
+                if (i > 1) {
+                    boostVec[0] = QPrev[1]/QPrev[0];
+                    boostVec[1] = QPrev[2]/QPrev[0];
+                    boostVec[2] = QPrev[3]/QPrev[0];
+                    boost_p(p[i-1], boostVec);
+                    boost_p(QCurr, boostVec);
+                }
+                MPrev = MCurr;
+                for (int k = 0; k < 4; k++) QPrev[k] = QCurr[k];
+            }
+        }
+
+        for (int k = 0; k < 4; k++) p[nParticles-1][k] = QCurr[k];
+
+        double logWeight = logPiOver2;
+        if (nParticles > 2) {
+            logWeight += (2.0 * nParticles - 4.0) * sycl::log(cmEnergy) + zCoeffFinal;
+        }
+
+        if (nMassive == 0) {
+            for (int i = 0; i < nParticles; i++)
+                for (int mu = 0; mu < 4; mu++)
+                    momenta[i][mu] = p[i][mu];
+            return logWeight;
+        }
+
+        // Make a conformal transformation to give particles mass
+        double momSq[nParticles];
+        double energies[nParticles];
+        double virtMom[nParticles];
+
+        double cmEnergySq = cmEnergy * cmEnergy;
+        double xMax = sycl::sqrt(1.0 - totalMassSq / cmEnergySq);
+        for (int i = 0; i < nParticles; i++) {
+            momSq[i] = p[i][0] * p[i][0];
+        }
+
+        int iteration = 0;
+        double x = xMax;
+        double accuracyGoal = cmEnergy * tolerance;
+
+        while (true) {
+            double f = -cmEnergy;
+            double df = 0.0;
+            double x2 = x * x;
+            for (int i = 0; i < nParticles; i++) {
+                energies[i] = sycl::sqrt(massSq[i] + x2 * momSq[i]);
+                f += energies[i];
+                df += momSq[i] / energies[i];
+            }
+            if (sycl::fabs(f) <= accuracyGoal) break;
+            if (++iteration > maxIterations) break;
+            x = x - f / (df * x);
+        }
+
+        for (int i = 0; i < nParticles; i++) {
+            virtMom[i] = x * p[i][0];
+            for (int k = 1; k < 4; k++) p[i][k] *= x;
+            p[i][0] = energies[i];
+        }
+
+        double weightProduct = 1.0;
+        double weightSum = 0.0;
+        for (int i = 0; i < nParticles; i++) {
+            weightProduct *= virtMom[i] / energies[i];
+            weightSum += (virtMom[i] * virtMom[i]) / energies[i];
+        }
+        double logWeightMassive = (2.0 * nParticles - 3.0) * sycl::log(x) 
+                                 + sycl::log(weightProduct / weightSum * cmEnergy);
+        logWeight += logWeightMassive;
+
+        for (int i = 0; i < nParticles; i++)
+            for (int mu = 0; mu < 4; mu++)
+                momenta[i][mu] = p[i][mu];
+
+        return logWeight;
+    }
+
+    auto generate(double cmEnergy, uint64_t& rngState, 
+                  double momenta[nParticles][4]) const -> double {
+        constexpr int numRandoms = 3 * nParticles - 4;
+        double r[numRandoms > 0 ? numRandoms : 1];
+        for (int i = 0; i < numRandoms; i++) {
+            r[i] = uniformRandom(rngState);
+        }
+        return generate(cmEnergy, r, momenta);
+    }
 };
 
 // =============================================================================
@@ -180,14 +431,19 @@ struct RamboAlgorithm {
 template <int nParticles, typename Algorithm = RamboAlgorithm<nParticles>>
 struct PhaseSpaceGenerator {
     double cmEnergy;
-    const double* masses;
     Algorithm algorithm;
+
+    static constexpr int nRandomNumbers = Algorithm::nRandomNumbers;
     
-    PhaseSpaceGenerator(double energy, const double* m) 
-        : cmEnergy(energy), masses(m), algorithm() {}
+    PhaseSpaceGenerator(double energy, const double* masses) 
+        : cmEnergy(energy), algorithm(masses) {}
     
     auto operator()(uint64_t& rngState, double momenta[][4]) const -> double {
-        return algorithm.generate(cmEnergy, masses, rngState, momenta);
+        return algorithm.generate(cmEnergy, rngState, momenta);
+    }
+
+    auto operator()(const double* r, double momenta[][4]) const -> double {
+        return algorithm.generate(cmEnergy, r, momenta);
     }
 };
 

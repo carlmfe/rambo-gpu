@@ -7,9 +7,10 @@
 namespace rambo {
 
 // =============================================================================
-// EggholderIntegrand
+// Eggholder integrand
 // =============================================================================
 
+// Toy integrand used for testing; depends on three final-state momenta.
 struct EggholderIntegrand {
     double lambdaSquared;
     
@@ -36,9 +37,10 @@ struct EggholderIntegrand {
 };
 
 // =============================================================================
-// ConstantIntegrand
+// Constant integrand
 // =============================================================================
 
+// Returns a constant value regardless of momenta (useful for sanity checks).
 struct ConstantIntegrand {
     double value;
     
@@ -51,9 +53,10 @@ struct ConstantIntegrand {
 };
 
 // =============================================================================
-// DrellYanIntegrand
+// Drell-Yan integrand
 // =============================================================================
 
+// Leading-order Drell-Yan style matrix element for q qbar -> l+ l- (toy model).
 struct DrellYanIntegrand {
     double quarkCharge;
     double alphaEM;
@@ -102,3 +105,4 @@ struct DrellYanIntegrand {
 } // namespace rambo
 
 #endif // RAMBO_BASE_INTEGRANDS_HPP
+ 

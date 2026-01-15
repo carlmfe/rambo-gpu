@@ -40,7 +40,7 @@
 // =============================================================================
 // Benchmark helper
 // =============================================================================
-template <typename AccTag, rambo::IntegrandConcept Integrand, int nParticles>
+template <typename AccTag, rambo::IntegrandConcept Integrand, int nParticles, typename Algorithm = rambo::RamboAlgorithm<nParticles>>
 void runBenchmark(const std::string& backendName, 
                   int64_t nEvents, 
                   double cmEnergy, 
@@ -57,7 +57,7 @@ void runBenchmark(const std::string& backendName,
     
     // Warmup run (smaller)
     {
-        rambo::RamboIntegrator<AccTag, Integrand, nParticles> warmup(
+        rambo::RamboIntegrator<AccTag, Integrand, nParticles, Algorithm> warmup(
             std::min(nEvents / 10, int64_t(10000)), integrand);
         warmup.run(cmEnergy, masses, mean, error, seed);
     }
@@ -65,7 +65,7 @@ void runBenchmark(const std::string& backendName,
     // Timed run
     auto start = std::chrono::high_resolution_clock::now();
     
-    rambo::RamboIntegrator<AccTag, Integrand, nParticles> integrator(nEvents, integrand);
+    rambo::RamboIntegrator<AccTag, Integrand, nParticles, Algorithm> integrator(nEvents, integrand);
     integrator.run(cmEnergy, masses, mean, error, seed);
     
     auto end = std::chrono::high_resolution_clock::now();
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
     
     // Run benchmark with compiled backend
-    runBenchmark<DefaultAccTag, rambo::DrellYanIntegrand, nParticles>(
+    runBenchmark<DefaultAccTag, rambo::DrellYanIntegrand, nParticles, rambo::RamboAlgorithm<nParticles>>(
         BACKEND_NAME, nEvents, cmEnergy, masses, integrand, seed);
     
     // Analytic verification
