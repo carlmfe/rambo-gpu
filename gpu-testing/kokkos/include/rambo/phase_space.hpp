@@ -500,7 +500,6 @@ public:
 
 template <int nParticles, typename Algorithm = RamboAlgorithm<nParticles>>
 struct PhaseSpaceGenerator {
-    double cmEnergy;
     Algorithm algorithm;
 
     /// Number of random numbers required by the underlying algorithm.
@@ -512,8 +511,8 @@ struct PhaseSpaceGenerator {
      * @param masses Pointer to an array of length `nParticles` with particle masses.
      */
     KOKKOS_FUNCTION
-    PhaseSpaceGenerator(double energy, const double* masses) 
-        : cmEnergy(energy), algorithm(masses) {}
+    PhaseSpaceGenerator(const double* masses) 
+        : algorithm(masses) {}
 
     /**
      * Generate a phase-space point using an RNG state.
@@ -522,7 +521,7 @@ struct PhaseSpaceGenerator {
      * @return Natural logarithm of the phase-space weight.
      */
     KOKKOS_INLINE_FUNCTION
-    auto operator()(uint64_t& rngState, double momenta[][4]) const -> double {
+    auto operator()(double cmEnergy, uint64_t& rngState, double momenta[][4]) const -> double {
         return algorithm.generate(cmEnergy, rngState, momenta);
     }
 
@@ -533,7 +532,7 @@ struct PhaseSpaceGenerator {
      * @return Natural logarithm of the phase-space weight.
      */
     KOKKOS_INLINE_FUNCTION
-    auto operator()(const double* r, double momenta[][4]) const -> double {
+    auto operator()(double cmEnergy, const double* r, double momenta[][4]) const -> double {
         return algorithm.generate(cmEnergy, r, momenta);
     }
 };

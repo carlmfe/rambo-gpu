@@ -102,13 +102,13 @@ public:
                 double localSum2 = 0.0;
                 
                 // Create generator once per thread (pre-computes mass quantities)
-                PhaseSpaceGenerator<NumParticles, Algorithm> generator(cmEnergy, localMasses);
+                PhaseSpaceGenerator<NumParticles, Algorithm> generator(localMasses);
                 
                 // Grid-stride loop: each thread processes multiple events
                 for (int64_t idx = threadIdx; idx < nEvents; idx += totalThreads) {
                     double momenta[NumParticles][4];
                     
-                    double logWeight = generator(rngState, momenta);
+                    double logWeight = generator(cmEnergy, rngState, momenta);
                     double fx = integrand.evaluate(momenta);
                     double weightedValue = fx * Kokkos::exp(logWeight);
                     

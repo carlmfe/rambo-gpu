@@ -57,7 +57,7 @@ private:
     // Simple serial Monte Carlo loop (kept intentionally straightforward).
     void launchMonteCarloKernel(double cmEnergy, const double* masses,
                                  double& sum, double& sumSquared, uint64_t seed) {
-        PhaseSpaceGenerator<NumParticles, Algorithm> generator(cmEnergy, masses);
+        PhaseSpaceGenerator<NumParticles, Algorithm> generator(masses);
         uint64_t rngState = seed;
         if (rngState == 0) rngState = 1;
 
@@ -66,7 +66,7 @@ private:
         double momenta[NumParticles][4];
 
         for (int64_t i = 0; i < nEvents_; ++i) {
-            double logWeight = generator(rngState, momenta);
+            double logWeight = generator(cmEnergy, rngState, momenta);
             double fx = integrand_.evaluate(momenta);
             double weightedValue = fx * std::exp(logWeight);
             localSum += weightedValue;
